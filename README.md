@@ -1,4 +1,7 @@
 mod_csrfprotector
 =================
 
-init repo of apache 2.0 module, for CSRF mitigation
+Source Code Repository of apache 2.x module, for CSRF mitigation
+
+
+For any queries contact me at: minhaz@owasp.org
