@@ -79,37 +79,30 @@ static keyValuePair* readPost(request_rec* r) {
  * CSRFP_TOKEN
  *
  * @param: length, int
- * @return: tok, csrftoken - string
+ * @return: token, csrftoken - string
  */
 static char* generateToken(request_rec *r, int length)
 {
-    const char* strinset = "ABCDEFGHIJKLMNOPQRSTWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    const char* stringset = "ABCDEFGHIJKLMNOPQRSTWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
     /**
      * @procedure: Generate a PRNG of length 128, retrun substr of length -- length
      */
     char *token = NULL;
-    token = apr_pcalloc(r->pool, sizeof(char) * 128);
-
-    //substring to be returned to the calling function
-    char *tok = NULL;
-    tok = apr_pcalloc(r->pool, sizeof(char) * length);
+    token = apr_pcalloc(r->pool, sizeof(char) * length);
     int i;
 
-    for (i = 0; i < 128; i++) {
+    for (i = 0; i < length; i++) {
         //Generate a random no between 0 and 124
         int rno = rand() % 123 + 1;
         if (rno < 62) {
-            token[i] = strinset[rno];
+            token[i] = stringset[rno];
         } else {
-            token[i] = strinset[rno - 62];
+            token[i] = stringset[rno - 62];
         }
     }
 
-    strncpy(tok, &token[0], length);
-    tok[length] = '\0';
-
-    return tok;
+    return token;
 }
 
 /**
@@ -120,22 +113,22 @@ static char* generateToken(request_rec *r, int length)
  */
 static apr_table_t *csrf_get_query(request_rec *r)
 {
+    apr_table_t *tbl = NULL;
+    const char *args = r->args;
 
-  apr_table_t *tbl = NULL;
-  const char *args = r->args;
-
-  if(args == NULL) {
-    return NULL;
-  }
-  tbl = apr_table_make(r->pool, 10);
-  while(args[0]) {
-    char *value = ap_getword(r->pool, &args, '&');
-    char *name = ap_getword_nc(r->pool, &value, '=');
-    if(name) {
-      apr_table_addn(tbl, name, value);   
+    if(args == NULL) {
+        return NULL;
     }
-  }
-  return tbl;
+
+    tbl = apr_table_make(r->pool, 10);
+    while(args[0]) {
+        char *value = ap_getword(r->pool, &args, '&');
+        char *name = ap_getword_nc(r->pool, &value, '=');
+        if(name) {
+            apr_table_addn(tbl, name, value);   
+        }
+    }
+    return tbl;
 }
 
 /**
@@ -154,21 +147,21 @@ static char* getCookieToken(request_rec *r)
     }
 
     char *p = strstr(cookie, CSRFP_TOKEN);
+    int totalLen = strlen(p), pos = 0, i;
 
-    int totalLen = strlen(p);
-    int pos = 0, i;
     for (i = 0; i < totalLen; i++) {
-        if (p[i] == ';') break;
-
+        if (p[i] == ';')
+            break;
         ++pos;
     }
 
     int len = pos - strlen(CSRFP_TOKEN) - 1;
-
     char *tok = NULL;
     tok = apr_pcalloc(r->pool, sizeof(char)*len);
 
+    //retrieve the token from cookie string
     strncpy(tok, &p[strlen(CSRFP_TOKEN) + 1], len);
+
     return tok;
 }
 
@@ -188,11 +181,14 @@ static int validatePOSTtoken(request_rec *r)
             if ( !strcmp(formData[i].key, CSRFP_TOKEN) ) {
                 ++flag;
                 // #todo: Now match this token with the cookie value
+                // #todo: Need to obtain alternate method for obtaining POST query string
+                //          ealier one works with 2.4.x only
             }
         }
 
         if (!flag) return 0;
     }
+    return 0;
 }
 
 /**
@@ -207,6 +203,8 @@ static int validateGETTtoken(request_rec *r)
     apr_table_t *GET = NULL;
     GET = csrf_get_query(r);
 
+    if (!GET) return 0;
+    
     //retrieve our CSRF_token from the table
     const char *tokenValue = NULL;
     tokenValue = apr_table_get(GET, CSRFP_TOKEN);
@@ -241,7 +239,7 @@ static int csrf_handler(request_rec *r)
 
     //Codes below are test codes, for fiddling phase
 
-    char * tok = generateToken(r, 10);
+    char * tok = generateToken(r, 20);
     ap_rprintf(r, "Token = %s <br>", tok);
 
 
