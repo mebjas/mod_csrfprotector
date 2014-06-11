@@ -23,56 +23,11 @@
 // Definations of all data structures to be used later
 //=============================================================
 
-/**
- * structure to store key value pair of POST query
- */
-typedef struct {
-    const char* key;
-    const char* value;
-} keyValuePair;
 
 //Definations for functions
 static int csrf_handler(request_rec *r);
 static void csrfp_register_hooks(apr_pool_t *pool);
 static char* generateToken(request_rec *r, int length);
-static keyValuePair* readPost(request_rec* r);
-
-/**
- * Function to parse the POST query, and return set of keyValuePair
- * i.e. POST query parameters
- * @param: r, request_rec pointer
- * @return: kvp, keyValuePair
- */
-static keyValuePair* readPost(request_rec* r) {
-    apr_array_header_t *pairs = NULL;
-    apr_off_t len;
-    apr_size_t size;
-    int res;
-    int i = 0;
-    char *buffer;
-    keyValuePair* kvp;
-
-    /*
-    res = ap_parse_form_data(r, NULL, &pairs, -1, HUGE_STRING_LEN);
-
-    // Return NULL if we failed or if there are is no POST data
-    if (res != OK || !pairs) return NULL; 
-    kvp = apr_pcalloc(r->pool, sizeof(keyValuePair) * (pairs->nelts + 1));
-
-    while (pairs && !apr_is_empty_array(pairs)) {
-        ap_form_pair_t *pair = (ap_form_pair_t *) apr_array_pop(pairs);
-        apr_brigade_length(pair->value, 1, &len);
-        size = (apr_size_t) len;
-        buffer = apr_palloc(r->pool, size + 1);
-        apr_brigade_flatten(pair->value, buffer, &size);
-        buffer[len] = 0;
-        kvp[i].key = apr_pstrdup(r->pool, pair->name);
-        kvp[i].value = buffer;
-        i++;
-    }
-    */
-    return kvp;
-}
 
 /**
  * Function to generate a pseudo random no to function as
@@ -172,21 +127,14 @@ static char* getCookieToken(request_rec *r)
  */
 static int validatePOSTtoken(request_rec *r)
 {
-    keyValuePair *formData;
-    
-    formData = readPost(r); //retrieve all key value pair
-    if (formData) {
-        int i, flag = 0;
-        for( i = 0; &formData[i]; i++) {
-            if ( !strcmp(formData[i].key, CSRFP_TOKEN) ) {
-                ++flag;
-                // #todo: Now match this token with the cookie value
-                // #todo: Need to obtain alternate method for obtaining POST query string
-                //          ealier one works with 2.4.x only
-            }
-        }
+    const char* tokenValue = NULL;  //retrieve this value from POST request
+    //#todo: Code to retreieve CSRFP_TOKEN from post query string
 
-        if (!flag) return 0;
+    if (!tokenValue) return 0;
+    else {
+        if ( !strcmp(tokenValue, getCookieToken(r) )) return 1;
+        //token doesn't match
+        return 0;
     }
     return 0;
 }
@@ -204,7 +152,7 @@ static int validateGETTtoken(request_rec *r)
     GET = csrf_get_query(r);
 
     if (!GET) return 0;
-    
+
     //retrieve our CSRF_token from the table
     const char *tokenValue = NULL;
     tokenValue = apr_table_get(GET, CSRFP_TOKEN);
@@ -212,7 +160,6 @@ static int validateGETTtoken(request_rec *r)
     if (!tokenValue) return 0;
     else {
         if ( !strcmp(tokenValue, getCookieToken(r) )) return 1;
-
         //token does not match
         return 0;
     }
@@ -233,6 +180,9 @@ static int csrf_handler(request_rec *r)
     // If we were reached through a GET or a POST request, be happy, else sad.
     if ( !strcmp(r->method, "POST") ) {
         //need to check configs weather or not a validation is needed POST
+        if (!validatePOSTtoken(r)) {
+            //#todo: perform failed validation action
+        }
     } else if ( !strcmp(r->method, "GET") ) {
         //need to check configs weather or not a validation is needed for GET
     }
@@ -242,8 +192,20 @@ static int csrf_handler(request_rec *r)
     char * tok = generateToken(r, 20);
     ap_rprintf(r, "Token = %s <br>", tok);
 
+    apr_table_t *t = csrf_get_query(r);
+    const char *temp = apr_table_get(t, CSRFP_TOKEN);
+    ap_rprintf(r, "<br> CSRFP_TOKEN in GET QUERY = %s, in cookie: %s", temp, getCookieToken(r));
 
-    /*temp code to print out all headers*/
+    if (validateGETTtoken(r)) {
+        ap_rprintf(r, "<br>CSRFP GET VALIDATION PASSED"); 
+    } else {
+        ap_rprintf(r, "<br>CSRFP GET VALIDATION FAILED");    
+    }
+
+    ap_rprintf(r, "<br> HANDLER: %s <br> ARGS: %s", r->handler, r->args);
+
+
+    /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
     const apr_array_header_t    *fields;
     int                         i;
     apr_table_entry_t           *e = 0;
@@ -252,17 +214,7 @@ static int csrf_handler(request_rec *r)
     fields = apr_table_elts(r->headers_in);
     e = (apr_table_entry_t *) fields->elts;
     for(i = 0; i < fields->nelts; i++) {
-        ap_rprintf(r, "%s: %s\n<br>", e[i].key, e[i].val);
-    }
-
-    apr_table_t *t = csrf_get_query(r);
-    const char *temp = apr_table_get(t, CSRFP_TOKEN);
-    ap_rprintf(r, "<br> get data = %s", temp);
-
-    if (validateGETTtoken(r)) {
-        ap_rprintf(r, "<br>CSRFP GET VALIDATION PASSED"); 
-    } else {
-        ap_rprintf(r, "<br>CSRFP GET VALIDATION FAILED");    
+        ap_rprintf(r, "<br>%s: %s\n", e[i].key, e[i].val);
     }
 
     return OK;
@@ -276,7 +228,7 @@ static int csrf_handler(request_rec *r)
 static void csrfp_register_hooks(apr_pool_t *pool)
 {
     // Create a hook in the request handler, so we get called when a request arrives
-    ap_hook_handler(csrf_handler, NULL, NULL, APR_HOOK_FIRST);
+    ap_hook_handler(csrf_handler, NULL, NULL, APR_HOOK_MIDDLE);
 }
 
 
