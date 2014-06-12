@@ -29,6 +29,10 @@
 #define CSRFP_URI_MAXLENGTH 200
 #define CSRFP_ERROR_MESSAGE_MAXLENGTH 200
 #define CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH 200
+#define DEFAULT_ERROR_MESSAGE ""
+#define DEFAULT_REDIRECT_URL ""
+#define DEFAULT_JS_FILE_PATH "http://localhost/csrfp_js/csrfprotector.js"
+
 
 /** definations for error codes **/
 #define CSRFP_ACTION_FORBIDDEN 0
@@ -252,24 +256,37 @@ static int csrf_handler(request_rec *r)
         ap_rprintf(r, "<br>CSRFP GET VALIDATION FAILED");    
     }
 
-    ap_rprintf(r, "<br> HANDLER: %s <br> ARGS: %s", r->handler, r->args);
+    // Code to print the configurations
+    ap_rprintf(r, "<br> Size: %d", sizeof(csrfp_config));
 
+    ap_rprintf(r, "<br>Flag = %d", config->flag);
+    ap_rprintf(r, "<br>action = %d", config->action);
+    //ap_rprintf(r, "<br>errorRedirectionUri = %s", config->errorRedirectionUri);
+    //ap_rprintf(r, "<br>errorCustomMessage = %s", config->errorCustomMessage);
+    //ap_rprintf(r, "<br>jsFilePath = %s", config->jsFilePath);
+    ap_rprintf(r, "<br>tokenLength = %d", config->tokenLength);
+    //ap_rprintf(r, "<br>disablesJsMessage = %s", config->disablesJsMessage);
+    //ap_rprintf(r, "<br>verifyGetFor = %s", config->verifyGetFor);
 
-    /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
-    const apr_array_header_t    *fields;
-    int                         i;
-    apr_table_entry_t           *e = 0;
-    /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
-
-    fields = apr_table_elts(r->headers_in);
-    e = (apr_table_entry_t *) fields->elts;
-    for(i = 0; i < fields->nelts; i++) {
-        ap_rprintf(r, "<br>%s: %s\n", e[i].key, e[i].val);
-    }
 
     return OK;
 }
 
+/**
+ * Handler to allocate memory to config object
+ * And allocae default values to variabled
+ */
+static void *csrfp_srv_config_create(apr_pool_t *p, server_rec *s)
+{
+    // Registering default configurations
+    config = apr_pcalloc(p, sizeof(csrfp_config));
+    config->flag = 1;
+    config->action = 0;
+    config->tokenLength = 20;
+    config->jsFilePath = apr_pstrdup(p, DEFAULT_JS_FILE_PATH);
+    config->errorRedirectionUri = apr_pstrdup(p, DEFAULT_REDIRECT_URL);
+    config->errorCustomMessage = apr_pstrdup(p, DEFAULT_ERROR_MESSAGE);
+}
 
 /** Configuration handler functions **/
 
@@ -390,13 +407,6 @@ static const command_rec csrfp_directives[] =
  */
 static void csrfp_register_hooks(apr_pool_t *pool)
 {
-    // Registering default configurations
-    config = apr_pcalloc(pool, sizeof(csrfp_config));
-    config->flag = 1;
-    config->action = 0;
-    config->tokenLength = 20;
-    config->jsFilePath = "http://localhost/csrfp_js/csrfprotector.js";
-
     // Create a hook in the request handler, so we get called when a request arrives
     ap_hook_handler(csrf_handler, NULL, NULL, APR_HOOK_MIDDLE);
 }
@@ -411,7 +421,7 @@ module AP_MODULE_DECLARE_DATA csrf_protector_module =
     STANDARD20_MODULE_STUFF,
     NULL,
     NULL,
-    NULL,
+    csrfp_srv_config_create, /* Server config create function */
     NULL,
     csrfp_directives,       /* Any directives we may have for httpd */
     csrfp_register_hooks    /* Our hook registering function */
