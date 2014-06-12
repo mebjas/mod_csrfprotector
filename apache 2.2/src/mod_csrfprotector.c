@@ -26,6 +26,18 @@
 
 /** definations **/
 #define CSRFP_TOKEN "csrfp_token"
+#define CSRFP_URI_MAXLENGTH 200
+#define CSRFP_ERROR_MESSAGE_MAXLENGTH 200
+#define CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH 200
+
+/** definations for error codes **/
+#define CSRFP_ACTION_FORBIDDEN 0
+#define CSRFP_ACTION_STRIP 1
+#define CSRFP_ACTION_REDIRECT 2
+#define CSRFP_ACTION_MESSAGE 3
+#define CSRFP_ACTION_INTERNAL_SERVER_ERROR 4
+
+
 
 //=============================================================
 // Definations of all data structures to be used later
@@ -33,6 +45,8 @@
 
 typedef struct 
 {
+    int flag;                       // Flag to check if CSRFP is disabled...
+                                    // ... 1 by default
     int action;                     // Action Codes, Default - 0
     char *errorRedirectionUri;      // Uri to redirect in case action == 2
     char *errorCustomMessage;       // Message to show in case action == 3
@@ -42,6 +56,8 @@ typedef struct
     ap_regex_t *verifyGetFor;       // Path pattern for which GET requests...
                                     // ...Need to be validated as well
 }csrfp_config;
+
+static csrfp_config *config;
 
 //=============================================================
 // Globals
@@ -57,6 +73,9 @@ static char* generateToken(request_rec *r, int length);
 //=============================================================
 // Functions
 //=============================================================
+
+
+
 /**
  * Function to generate a pseudo random no to function as
  * CSRFP_TOKEN
@@ -205,24 +224,27 @@ static int csrf_handler(request_rec *r)
     ap_set_content_type(r, "text/html");
     
 
-    // If we were reached through a GET or a POST request, be happy, else sad.
-    if ( !strcmp(r->method, "POST") ) {
-        //need to check configs weather or not a validation is needed POST
-        if (!validatePOSTtoken(r)) {
+    // If request type is POST
+    // Need to check configs weather or not a validation is needed POST
+    if ( !strcmp(r->method, "POST")) {
+        if ( !validatePOSTtoken(r) ) {
             //#todo: perform failed validation action
+            ap_rprintf(r, "<br>POST validation failed");
+        } else {
+            ap_rprintf(r, "<br> POST validation passed");
         }
+        ap_rprintf(r, "<br> we have a POST request");
+
     } else if ( !strcmp(r->method, "GET") ) {
         //need to check configs weather or not a validation is needed for GET
+        ap_rprintf(r, "<br> we have a GET request");
     }
 
     //Codes below are test codes, for fiddling phase
 
-    char * tok = generateToken(r, 20);
-    ap_rprintf(r, "Token = %s <br>", tok);
-
     apr_table_t *t = csrf_get_query(r);
     const char *temp = apr_table_get(t, CSRFP_TOKEN);
-    ap_rprintf(r, "<br> CSRFP_TOKEN in GET QUERY = %s, in cookie: %s", temp, getCookieToken(r));
+    ap_rprintf(r, "<br> CSRFP_TOKEN --GET = %s<br> CSRFP_TOKEN --COOKIE = %s", temp, getCookieToken(r));
 
     if (validateGETTtoken(r)) {
         ap_rprintf(r, "<br>CSRFP GET VALIDATION PASSED"); 
@@ -249,12 +271,132 @@ static int csrf_handler(request_rec *r)
 }
 
 
+/** Configuration handler functions **/
+
+/** csrfEnable **/
+const char *csrfp_enable_cmd(cmd_parms *cmd, void *cfg, const char *arg)
+{
+    if(!strcasecmp(arg, "on")) config->flag = 1;
+    else config->flag = 0;
+    return NULL;
+}
+
+/** csrfAction **/
+const char *csrfp_action_cmd(cmd_parms *cmd, void *cfg, const char *arg)
+{
+    if(!strcasecmp(arg, "forbidden"))
+        config->action = CSRFP_ACTION_FORBIDDEN;
+    else if (!strcasecmp(arg, "strip"))
+        config->action = CSRFP_ACTION_STRIP;
+    else if (!strcasecmp(arg, "redirect"))
+        config->action = CSRFP_ACTION_REDIRECT;
+    else if (!strcasecmp(arg, "message"))
+        config->action = CSRFP_ACTION_MESSAGE;
+    else if (!strcasecmp(arg, "internal_server_error"))
+        config->action = CSRFP_ACTION_INTERNAL_SERVER_ERROR;
+    else config->action = CSRFP_ACTION_FORBIDDEN;       //default
+
+    return NULL;
+}
+
+/** errorRedirectionUri **/
+const char *csrfp_errorRedirectionUri_cmd(cmd_parms *cmd, void *cfg, const char *arg)
+{
+    if(strlen(arg) > 0) {
+        strncpy(config->errorRedirectionUri, arg,
+        CSRFP_URI_MAXLENGTH);
+    }
+    else config->errorRedirectionUri = NULL;
+
+    return NULL;
+}
+
+/** errorCustomMessage **/
+const char *csrfp_errorCustomMessage_cmd(cmd_parms *cmd, void *cfg, const char *arg)
+{
+    if(strlen(arg) > 0) {
+        strncpy(config->errorCustomMessage, arg,
+        CSRFP_ERROR_MESSAGE_MAXLENGTH);
+    }
+    else config->errorCustomMessage = NULL;
+
+    return NULL;
+}
+
+/** jsFilePath **/
+const char *csrfp_jsFilePath_cmd(cmd_parms *cmd, void *cfg, const char *arg)
+{
+    if(strlen(arg) > 0) {
+        strncpy(config->jsFilePath, arg,
+            CSRFP_URI_MAXLENGTH);
+    }
+    //no else as default config shall come to effect
+
+    return NULL;
+}
+
+/** tokenLength **/
+const char *csrfp_tokenLength_cmd(cmd_parms *cmd, void *cfg, const char *arg)
+{
+    if(strlen(arg) > 0) {
+        int length = atoi(arg);
+        if (length) config->tokenLength = length;
+    }
+    //no else as default config shall come to effect
+
+    return NULL;
+}
+
+/** verifyGetFor **/
+const char *csrfp_verifyGetFor_cmd(cmd_parms *cmd, void *cfg, const char *arg)
+{
+    //#todo: finish this function
+    config->verifyGetFor = NULL;        //temp
+
+    return NULL;
+}
+
+/** Directives from httpd.conf or .htaccess **/
+static const command_rec csrfp_directives[] =
+{
+    //#todo: verifyGetFor shall have multiple entries, need to check
+    AP_INIT_TAKE1("csrfpEnable", csrfp_enable_cmd, NULL,
+                RSRC_CONF|ACCESS_CONF,
+                "csrfpEnable 'on'|'off', enables the module. Default is 'on'"),
+    AP_INIT_TAKE1("csrfpAction", csrfp_action_cmd, NULL,
+                RSRC_CONF|ACCESS_CONF,
+                "Defines Action to be taken in case of failed validation"),
+    AP_INIT_TAKE1("errorRedirectionUri", csrfp_errorRedirectionUri_cmd, NULL,
+                RSRC_CONF,
+                "Defines URL to redirect if action = 2"),
+    AP_INIT_TAKE1("errorCustomMessage", csrfp_errorCustomMessage_cmd, NULL,
+                RSRC_CONF,
+                "Defines Custom Error Message if action = 3"),
+    AP_INIT_TAKE1("jsFilePath", csrfp_jsFilePath_cmd, NULL,
+                RSRC_CONF,
+                "Absolute url of the js file"),
+    AP_INIT_TAKE1("tokenLength", csrfp_tokenLength_cmd, NULL,
+                RSRC_CONF,
+                "Defines length of csrfp_token in cookie"),
+    AP_INIT_TAKE1("verifyGetFor", csrfp_verifyGetFor_cmd, NULL,
+                RSRC_CONF|ACCESS_CONF,
+                "Pattern of urls for which GET request CSRF validation is enabled"),
+    { NULL }
+};
+
 /**
  * Hook registering function for mod_csrfp
  * @param: pool, apr_pool_t
  */
 static void csrfp_register_hooks(apr_pool_t *pool)
 {
+    // Registering default configurations
+    config = apr_pcalloc(pool, sizeof(csrfp_config));
+    config->flag = 1;
+    config->action = 0;
+    config->tokenLength = 20;
+    config->jsFilePath = "http://localhost/csrfp_js/csrfprotector.js";
+
     // Create a hook in the request handler, so we get called when a request arrives
     ap_hook_handler(csrf_handler, NULL, NULL, APR_HOOK_MIDDLE);
 }
@@ -271,6 +413,6 @@ module AP_MODULE_DECLARE_DATA csrf_protector_module =
     NULL,
     NULL,
     NULL,
-    NULL,
-    csrfp_register_hooks   /* Our hook registering function */
+    csrfp_directives,       /* Any directives we may have for httpd */
+    csrfp_register_hooks    /* Our hook registering function */
 };
