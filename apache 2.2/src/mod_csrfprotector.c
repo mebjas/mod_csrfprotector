@@ -28,10 +28,18 @@
 #define CSRFP_TOKEN "csrfp_token"
 #define CSRFP_URI_MAXLENGTH 200
 #define CSRFP_ERROR_MESSAGE_MAXLENGTH 200
-#define CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH 200
+#define CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH 400
+
+#define DEFAULT_ACTION 0
+#define DEFAULT_TOKEN_LENGTH 15
 #define DEFAULT_ERROR_MESSAGE ""
 #define DEFAULT_REDIRECT_URL ""
 #define DEFAULT_JS_FILE_PATH "http://localhost/csrfp_js/csrfprotector.js"
+#define DEFAULT_DISABLED_JS_MESSSAGE "This site attempts to protect users against" \
+" <a href=\"https://www.owasp.org/index.php/Cross-Site_Request_Forgery_%28CSRF%29\">" \
+" Cross-Site Request Forgeries </a> attacks. In order to do so, you must have JavaScript " \
+" enabled in your web browser otherwise this site will fail to work correctly for you. " \
+" See details of your web browser for how to enable JavaScript."
 
 
 /** definations for error codes **/
@@ -257,15 +265,16 @@ static int csrf_handler(request_rec *r)
     }
 
     // Code to print the configurations
-    ap_rprintf(r, "<br> Size: %d", sizeof(csrfp_config));
+    ap_rprintf(r, "<br> Size: %ld", sizeof(csrfp_config));
+    ap_rprintf(r, "<br> SizeOf jsFilePath: %ld", sizeof(config->jsFilePath));
 
     ap_rprintf(r, "<br>Flag = %d", config->flag);
     ap_rprintf(r, "<br>action = %d", config->action);
-    //ap_rprintf(r, "<br>errorRedirectionUri = %s", config->errorRedirectionUri);
-    //ap_rprintf(r, "<br>errorCustomMessage = %s", config->errorCustomMessage);
-    //ap_rprintf(r, "<br>jsFilePath = %s", config->jsFilePath);
+    ap_rprintf(r, "<br>errorRedirectionUri = %s", config->errorRedirectionUri);
+    ap_rprintf(r, "<br>errorCustomMessage = %s", config->errorCustomMessage);
+    ap_rprintf(r, "<br>jsFilePath = %s", config->jsFilePath);
     ap_rprintf(r, "<br>tokenLength = %d", config->tokenLength);
-    //ap_rprintf(r, "<br>disablesJsMessage = %s", config->disablesJsMessage);
+    ap_rprintf(r, "<br>disablesJsMessage = %s", config->disablesJsMessage);
     //ap_rprintf(r, "<br>verifyGetFor = %s", config->verifyGetFor);
 
 
@@ -281,11 +290,28 @@ static void *csrfp_srv_config_create(apr_pool_t *p, server_rec *s)
     // Registering default configurations
     config = apr_pcalloc(p, sizeof(csrfp_config));
     config->flag = 1;
-    config->action = 0;
-    config->tokenLength = 20;
-    config->jsFilePath = apr_pstrdup(p, DEFAULT_JS_FILE_PATH);
-    config->errorRedirectionUri = apr_pstrdup(p, DEFAULT_REDIRECT_URL);
-    config->errorCustomMessage = apr_pstrdup(p, DEFAULT_ERROR_MESSAGE);
+    config->action = DEFAULT_ACTION;
+    config->tokenLength = DEFAULT_TOKEN_LENGTH;
+
+    // Allocates memory, and assign defalut value For jsFilePath
+    config->jsFilePath = apr_pcalloc(p, CSRFP_URI_MAXLENGTH);
+    strncpy(config->jsFilePath, DEFAULT_JS_FILE_PATH,
+            CSRFP_URI_MAXLENGTH);
+
+    // Allocates memory, and assign defalut value For errorRedirectionUri
+    config->errorRedirectionUri = apr_pcalloc(p, CSRFP_URI_MAXLENGTH);
+    strncpy(config->errorRedirectionUri, DEFAULT_REDIRECT_URL,
+            CSRFP_URI_MAXLENGTH);
+
+    // Allocates memory, and assign defalut value For errorCustomMessage
+    config->errorCustomMessage = apr_pcalloc(p, CSRFP_ERROR_MESSAGE_MAXLENGTH);
+    strncpy(config->errorCustomMessage, DEFAULT_ERROR_MESSAGE,
+            CSRFP_ERROR_MESSAGE_MAXLENGTH);
+
+    // Allocates memory, and assign defalut value For disablesJsMessage
+    config->disablesJsMessage = apr_pcalloc(p, CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH);
+    strncpy(config->disablesJsMessage, DEFAULT_DISABLED_JS_MESSSAGE,
+            CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH);
 }
 
 /** Configuration handler functions **/
