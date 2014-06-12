@@ -3,10 +3,12 @@
  * CSRF vulnerability in web applications
  */
 
+/** standard c libs **/
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#include "apr_hash.h"
+
+/** apache **/
 #include "ap_config.h"
 #include "ap_provider.h"
 #include "httpd.h"
@@ -15,20 +17,46 @@
 #include "http_log.h"
 #include "http_protocol.h"
 #include "http_request.h"
-#include <apr_buckets.h>
+#include "util_filter.h"
+#include "ap_regex.h"
 
+/** APR **/
+#include "apr_hash.h"
+#include "apr_buckets.h"
+
+/** definations **/
 #define CSRFP_TOKEN "csrfp_token"
 
 //=============================================================
 // Definations of all data structures to be used later
 //=============================================================
 
+typedef struct 
+{
+    int action;                     // Action Codes, Default - 0
+    char *errorRedirectionUri;      // Uri to redirect in case action == 2
+    char *errorCustomMessage;       // Message to show in case action == 3
+    char *jsFilePath;               // Absolute path for JS file
+    int tokenLength;                // Length of CSRFP_TOKEN, Default 20
+    char *disablesJsMessage;        // Message to be shown in <noscript>
+    ap_regex_t *verifyGetFor;       // Path pattern for which GET requests...
+                                    // ...Need to be validated as well
+}csrfp_config;
+
+//=============================================================
+// Globals
+//=============================================================
+module AP_MODULE_DECLARE_DATA csrf_protector_module;
 
 //Definations for functions
 static int csrf_handler(request_rec *r);
 static void csrfp_register_hooks(apr_pool_t *pool);
 static char* generateToken(request_rec *r, int length);
 
+
+//=============================================================
+// Functions
+//=============================================================
 /**
  * Function to generate a pseudo random no to function as
  * CSRFP_TOKEN
