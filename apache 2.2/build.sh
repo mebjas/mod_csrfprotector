@@ -9,5 +9,33 @@ echo "Initiating MOD_CSRFPROTECTOR BUILD PROCESS"
 sudo apxs2 -cia -n csrf_protector ./src/mod_csrfprotector.c
 echo "BUILD FINISHED ...!"
 echo "Restarting APACHE ...!"
+
+echo "---------------------------------------------------"
+echo "Appending default configurations to /etc/apache2/mods-enabled/csrf_protector.load"
+echo "" >> /etc/apache2/mods-enabled/csrf_protector.load
+echo "#Configuration for CSRFProtector" >> /etc/apache2/mods-enabled/csrf_protector.load
+echo "csrfpEnable on" >> /etc/apache2/mods-enabled/csrf_protector.load
+echo "csrfpAction forbidden" >> /etc/apache2/mods-enabled/csrf_protector.load
+#echo "errorRedirectionUri \"-\"" >> /etc/apache2/mods-enabled/csrf_protector.load
+echo "errorCustomMessage \"<h2>Access forbidden by OWASP CSRFProtector</h2>\"" >> /etc/apache2/mods-enabled/csrf_protector.load
+echo "jsFilePath http://localhost/" >> /etc/apache2/mods-enabled/csrf_protector.load
+echo "tokenLength 20" >> /etc/apache2/mods-enabled/csrf_protector.load
+#echo "disablesJsMessage \"-\"" >> /etc/apache2/mods-enabled/csrf_protector.load
+echo "verifyGetFor (.*):\/\/(.*)\/(.*)" >> /etc/apache2/mods-enabled/csrf_protector.load
+
+echo "Configuration write finished"
+echo "---------------------------------------------------"
+
 sudo service apache2 restart
 echo "mod_csrfprotector has been compiled, installed and activated"
+
+
+
+
+
+
+
+
+
+
+
