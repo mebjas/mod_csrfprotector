@@ -32,7 +32,7 @@
 
 #define DEFAULT_ACTION 0
 #define DEFAULT_TOKEN_LENGTH 15
-#define DEFAULT_ERROR_MESSAGE ""
+#define DEFAULT_ERROR_MESSAGE "<h2>ACCESS FORBIDDEN BY OWASP CSRF_PROTECTOR!</h2>"
 #define DEFAULT_REDIRECT_URL ""
 #define DEFAULT_JS_FILE_PATH "http://localhost/csrfp_js/csrfprotector.js"
 #define DEFAULT_DISABLED_JS_MESSSAGE "This site attempts to protect users against" \
@@ -390,6 +390,18 @@ const char *csrfp_tokenLength_cmd(cmd_parms *cmd, void *cfg, const char *arg)
     return NULL;
 }
 
+/** disablesJsMessage **/
+const char *csrfp_disablesJsMessage_cmd(cmd_parms *cmd, void *cfg, const char *arg)
+{
+    if(strlen(arg) > 0) {
+        strncpy(config->disablesJsMessage, arg,
+            CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH);
+    }
+    //no else as default config shall come to effect
+
+    return NULL;
+}
+
 /** verifyGetFor **/
 const char *csrfp_verifyGetFor_cmd(cmd_parms *cmd, void *cfg, const char *arg)
 {
@@ -421,6 +433,9 @@ static const command_rec csrfp_directives[] =
     AP_INIT_TAKE1("tokenLength", csrfp_tokenLength_cmd, NULL,
                 RSRC_CONF,
                 "Defines length of csrfp_token in cookie"),
+    AP_INIT_TAKE1("disablesJsMessage", csrfp_disablesJsMessage_cmd, NULL,
+                RSRC_CONF,
+                "<noscript> message to be shown to user"),
     AP_INIT_TAKE1("verifyGetFor", csrfp_verifyGetFor_cmd, NULL,
                 RSRC_CONF|ACCESS_CONF,
                 "Pattern of urls for which GET request CSRF validation is enabled"),
