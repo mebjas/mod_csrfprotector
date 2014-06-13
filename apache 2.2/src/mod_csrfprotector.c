@@ -319,8 +319,8 @@ static void *csrfp_srv_config_create(apr_pool_t *p, server_rec *s)
 /** csrfEnable **/
 const char *csrfp_enable_cmd(cmd_parms *cmd, void *cfg, const char *arg)
 {
-    if(!strcasecmp(arg, "on")) config->flag = 1;
-    else config->flag = 0;
+    if(!strcasecmp(arg, "off")) config->flag = 0;
+    else config->flag = 1;
     return NULL;
 }
 
