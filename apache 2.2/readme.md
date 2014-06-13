@@ -17,7 +17,7 @@ config name | description | example
 **jsFilePath** | Absolute url of the js file | jsFilePath http://somesite.com/csrfp/csrfprotector.js
 **tokenLength** | Defines length of csrfp_token in cookie | tokenLength 20
 **disablesJsMessage** | `<noscript>` message to be shown to user | disablesJsMessage "Please enable javascript for CSRF Protector to work"
-**verifyGetFor** | Pattern of urls for which GET request CSRF validation is enabled | verifyGetFor *://*/*
+**verifyGetFor** | Pattern of urls for which GET request CSRF validation is enabled | verifyGetFor `*://*/*`
 
 How to modify configurations
 ============================
