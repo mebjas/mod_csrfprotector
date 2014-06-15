@@ -27,7 +27,7 @@ in `apache.conf` add these lines
 csrfpEnable on
 csrfpAction forbidden
 errorRedirectionUri "-"
-errorCustomMessage "<h2>Access forbidden by OWASP CSRFProtector"
+errorCustomMessage "Access forbidden by OWASP CSRFProtector"
 jsFilePath http://localhost/
 tokenLength 20
 disablesJsMessage "-"
