@@ -26,6 +26,8 @@
 
 /** definations **/
 #define CSRFP_TOKEN "csrfp_token"
+#define DEFAULT_POST_ENCTYPE "application/x-www-form-urlencoded"
+
 #define CSRFP_URI_MAXLENGTH 200
 #define CSRFP_ERROR_MESSAGE_MAXLENGTH 200
 #define CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH 400
@@ -86,7 +88,79 @@ static char* generateToken(request_rec *r, int length);
 // Functions
 //=============================================================
 
+/**
+ * function to load POST data from request buffer
+ *
+ * @param: r, request_rec object
+ * @param: char buffer to which data is loaded
+ *
+ * @return: returns 0 on success
+ */
+static int util_read(request_rec *r, const char **rbuf)
+{
+    int rc;
+    if ((rc = ap_setup_client_block(r, REQUEST_CHUNKED_ERROR)) != OK) {
+        return rc;
+    }
+    if (ap_should_client_block(r)) {
+        char argsbuffer[HUGE_STRING_LEN];
+        int rsize, len_read, rpos=0;
+        long length = r->remaining;
+        *rbuf = apr_pcalloc(r->pool, length + 1);
 
+        while ((len_read = ap_get_client_block(r, argsbuffer, sizeof(argsbuffer))) > 0) { 
+          if ((rpos + len_read) > length) {
+            rsize = length - rpos;
+          } else {
+            rsize = len_read;
+          }
+          memcpy((char*)*rbuf + rpos, argsbuffer, rsize);
+          rpos += rsize;
+        }
+    }
+    return rc;
+}
+
+/**
+ * Returns table of POST key-value pair
+ *
+ * @param: r, request_rec object
+ * @return: tbl, apr_table_t table object
+ */
+static apr_table_t *read_post(request_rec *r)
+{
+    const char *data;
+    const char *key, *val, *type;
+    int rc = OK;
+
+    // If not POST, return
+    if (r->method_number != M_POST) {
+        return NULL;
+    }
+
+    type = apr_table_get(r->headers_in, "Content-Type");
+    // If content type not appropriate, return
+    if (strcasecmp(type, DEFAULT_POST_ENCTYPE) != 0) {
+        return NULL;
+    }
+
+    // If no data found in POST, return
+    if ((rc = util_read(r, &data)) != OK) {
+        return NULL;
+    }
+
+    apr_table_t *tbl;
+    // Allocate memory to POST data table
+    tbl = apr_table_make(r->pool, 8);
+    while(*data && (val = ap_getword(r->pool, &data, '&'))) {
+        key = ap_getword(r->pool, &val, '=');
+        ap_unescape_url((char*)key);
+        ap_unescape_url((char*)val);
+        apr_table_setn(tbl, key, val);
+    }
+
+    return tbl;
+}
 
 /**
  * Function to generate a pseudo random no to function as
@@ -187,7 +261,10 @@ static char* getCookieToken(request_rec *r)
 static int validatePOSTtoken(request_rec *r)
 {
     const char* tokenValue = NULL;  //retrieve this value from POST request
-    //#todo: Code to retreieve CSRFP_TOKEN from post query string
+    apr_table_t *POST;
+    POST = read_post(r);
+
+    tokenValue = apr_table_get(POST, CSRFP_TOKEN);
 
     if (!tokenValue) return 0;
     else {
@@ -239,30 +316,28 @@ static int csrf_handler(request_rec *r)
     // If request type is POST
     // Need to check configs weather or not a validation is needed POST
     if ( !strcmp(r->method, "POST")) {
+        //tmp
+        ap_rprintf(r, "<br>POST request recieved");
+
         if ( !validatePOSTtoken(r) ) {
+            ap_rprintf(r, "<br> POST validation failed");
             //#todo: perform failed validation action
-            ap_rprintf(r, "<br>POST validation failed");
         } else {
             ap_rprintf(r, "<br> POST validation passed");
+            //#todo: regenrate token and send as cookie header
         }
-        ap_rprintf(r, "<br> we have a POST request");
 
     } else if ( !strcmp(r->method, "GET") ) {
-        //need to check configs weather or not a validation is needed for GET
-        ap_rprintf(r, "<br> we have a GET request");
+        //#todo:
+        //1. Check get validation is enabled for a particular request
+        //2. if yes
+        //      validate the request - if fails
+        //          take appropriate action, as per configuration
+        //      else
+        //          refresh cookie in output header
     }
 
     //Codes below are test codes, for fiddling phase
-
-    apr_table_t *t = csrf_get_query(r);
-    const char *temp = apr_table_get(t, CSRFP_TOKEN);
-    ap_rprintf(r, "<br> CSRFP_TOKEN --GET = %s<br> CSRFP_TOKEN --COOKIE = %s", temp, getCookieToken(r));
-
-    if (validateGETTtoken(r)) {
-        ap_rprintf(r, "<br>CSRFP GET VALIDATION PASSED"); 
-    } else {
-        ap_rprintf(r, "<br>CSRFP GET VALIDATION FAILED");    
-    }
 
     // Code to print the configurations
     ap_rprintf(r, "<br> Size: %ld", sizeof(csrfp_config));
@@ -276,7 +351,7 @@ static int csrf_handler(request_rec *r)
     ap_rprintf(r, "<br>tokenLength = %d", config->tokenLength);
     ap_rprintf(r, "<br>disablesJsMessage = %s", config->disablesJsMessage);
     //ap_rprintf(r, "<br>verifyGetFor = %s", config->verifyGetFor);
-
+    
 
     return OK;
 }
