@@ -20,7 +20,7 @@
 #include "util_filter.h"
 #include "ap_regex.h"
 
-/** APR **/
+/** APRs **/
 #include "apr_hash.h"
 #include "apr_buckets.h"
 
@@ -79,9 +79,9 @@ static csrfp_config *config;
 module AP_MODULE_DECLARE_DATA csrf_protector_module;
 
 //Definations for functions
-static int csrf_handler(request_rec *r);
-static void csrfp_register_hooks(apr_pool_t *pool);
-static char* generateToken(request_rec *r, int length);
+static char *generateToken(request_rec *r, int length);
+static int util_read(request_rec *r, const char **rbuf);
+static apr_table_t *read_post(request_rec *r);
 
 
 //=============================================================
@@ -125,6 +125,7 @@ static int util_read(request_rec *r, const char **rbuf)
  * Returns table of POST key-value pair
  *
  * @param: r, request_rec object
+ *
  * @return: tbl, apr_table_t table object
  */
 static apr_table_t *read_post(request_rec *r)
@@ -167,6 +168,7 @@ static apr_table_t *read_post(request_rec *r)
  * CSRFP_TOKEN
  *
  * @param: length, int
+ *
  * @return: token, csrftoken - string
  */
 static char* generateToken(request_rec *r, int length)
@@ -196,7 +198,8 @@ static char* generateToken(request_rec *r, int length)
 /**
  * Returns a table containing the query name/value pairs.
  *
- * @param r
+ * @param r, request_rec object
+ *
  * @return tbl, Table of NULL if no parameter are available
  */
 static apr_table_t *csrf_get_query(request_rec *r)
@@ -223,6 +226,7 @@ static apr_table_t *csrf_get_query(request_rec *r)
  * Function to return the token value from cookie
  *
  * @param: r, request_rec
+ *
  * @return: CSRFP_TOKEN if exist in cookie, else null
  */
 static char* getCookieToken(request_rec *r)
@@ -255,12 +259,16 @@ static char* getCookieToken(request_rec *r)
 
 /**
  * Function to validate post token, csrfp_token in POST query parameter
+ *
  * @param: r, request_rec pointer
+ *
  * @return: int, 0 - for failed validation, 1 - for passed
  */
 static int validatePOSTtoken(request_rec *r)
 {
-    const char* tokenValue = NULL;  //retrieve this value from POST request
+    const char* tokenValue = NULL;
+
+    // parse the value from POST query
     apr_table_t *POST;
     POST = read_post(r);
 
@@ -278,7 +286,8 @@ static int validatePOSTtoken(request_rec *r)
 /**
  * Function to validate GET token, csrfp_token in GET query parameter
  *
- * @param: r, request_rec pointer,
+ * @param: r, request_rec pointer
+ *
  * @return: int, 0 - for failed validation, 1 - for passed
  */
 static int validateGETTtoken(request_rec *r)
@@ -303,7 +312,9 @@ static int validateGETTtoken(request_rec *r)
 
 /**
  * Call back function registered by Hook Registering Function
+ *
  * @param: r, request_rec object
+ *
  * @return: status code, int
  */
 static int csrf_handler(request_rec *r)
@@ -359,6 +370,8 @@ static int csrf_handler(request_rec *r)
 /**
  * Handler to allocate memory to config object
  * And allocae default values to variabled
+ *
+ * @param: standard parameters, @return void
  */
 static void *csrfp_srv_config_create(apr_pool_t *p, server_rec *s)
 {
@@ -389,7 +402,9 @@ static void *csrfp_srv_config_create(apr_pool_t *p, server_rec *s)
             CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH);
 }
 
-/** Configuration handler functions **/
+//=============================================================
+// Configuration handler functions 
+//=============================================================
 
 /** csrfEnable **/
 const char *csrfp_enable_cmd(cmd_parms *cmd, void *cfg, const char *arg)
