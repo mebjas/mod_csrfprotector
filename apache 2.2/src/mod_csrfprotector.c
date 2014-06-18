@@ -29,6 +29,7 @@
 /** definations **/
 #define CSRFP_TOKEN "csrfp_token"
 #define DEFAULT_POST_ENCTYPE "application/x-www-form-urlencoded"
+#define REGEN_TOKEN "true"
 
 #define CSRFP_URI_MAXLENGTH 200
 #define CSRFP_ERROR_MESSAGE_MAXLENGTH 200
@@ -332,18 +333,26 @@ static int validateGETTtoken(request_rec *r)
  * @return content type, string
  */
 static const char *getOutputContentType(request_rec *r) {
-  const char* type = NULL;
-  type = apr_table_get(r->headers_out, "Content-Type");
-  if (type == NULL) {
-    // maybe an error page
-    type = apr_table_get(r->err_headers_out, "Content-Type");
-  }
-  if (type == NULL) {
-    type = r->content_type;
-  }
-  return type;
+    const char* type = NULL;
+    type = apr_table_get(r->headers_out, "Content-Type");
+    if (type == NULL) {
+        // maybe an error page
+        type = apr_table_get(r->err_headers_out, "Content-Type");
+    }
+    if (type == NULL) {
+        type = r->content_type;
+    }
+    return type;
 }
 
+/**
+ * Returns appropriate status code, as per configuration
+ * For failed validation action
+ *
+ * @param r, request_rec object
+ *
+ * @return int, status code for action
+ */
 static int failedValidationAction(request_rec *r)
 {
     csrfp_config *conf = ap_get_module_config(r->server->module_config,
@@ -428,19 +437,12 @@ static int csrfp_header_parser(request_rec *r)
 
     // If request type is POST
     // Need to check configs weather or not a validation is needed POST
-    if ( !strcmp(r->method, "POST")) {
-
-        if ( !validatePOSTtoken(r) ) {
+    if ( !strcmp(r->method, "POST")
+        && !validatePOSTtoken(r)) {
             
-            // Log this --
-            // Take actions as per configuration
-            return failedValidationAction(r);
-            
-        } else {
-            ap_rprintf(r, "<br> POST validation passed");
-
-            //#todo: regenrate token and send as cookie header
-        }
+        // Log this --
+        // Take actions as per configuration
+        return failedValidationAction(r);
 
     } else if ( !strcmp(r->method, "GET") ) {
         //#todo:
@@ -451,6 +453,10 @@ static int csrfp_header_parser(request_rec *r)
         //      else
         //          refresh cookie in output header
     }
+
+    // Information for output_filter to regenrate token and
+    // append it to output header -- Regenrate token
+    apr_table_add(r->subprocess_env, "regenToken", REGEN_TOKEN);
 
     // Appends X-Protected-By header to output header
     apr_table_addn(r->headers_out, "X-Protected-By", "CSRFP 0.0.1");
@@ -474,8 +480,22 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
      * - Determine if it's html and force chunked response
      * - search <body to insert <noscript> .. </noscript> info
      * - search </body> to insert script
+     * - set csrfp_token cookie
      * - end (all done)
      */
+
+
+    // Section to regenrate and send new Cookie Header (csrfp_token) to client
+    const char *regenToken = NULL;
+    regenToken = apr_table_get(r->subprocess_env, "regenToken");
+
+    if (regenToken && !strcasecmp(regenToken, REGEN_TOKEN)) {
+        /*
+         * - Regenrate token
+         * - Send it as output header
+         */
+    }
+
     ap_rprintf(r, "<br>output filter");
     return ap_pass_brigade(f->next, bb);
 }
