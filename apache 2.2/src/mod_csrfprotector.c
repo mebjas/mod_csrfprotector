@@ -433,7 +433,7 @@ static int csrfp_header_parser(request_rec *r)
     if (!conf->flag) 
         return OK;
 
-    ap_add_output_filter("csrfp_out_filter", NULL, r, r->connection);
+    //ap_add_output_filter("csrfp_out_filter", NULL, r, r->connection);
 
     // If request type is POST
     // Need to check configs weather or not a validation is needed POST
@@ -474,7 +474,7 @@ static int csrfp_header_parser(request_rec *r)
 static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 {
     request_rec *r = f->r;
-    apr_table_addn(r->headers_out, "output_filter", "called");
+    apr_table_addn(r->headers_out, "output_filter", "Arrival Confirmed");
 
     /*
      * - Determine if it's html and force chunked response
@@ -484,6 +484,9 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
      * - end (all done)
      */
 
+    if (APR_BRIGADE_EMPTY(bb)) {
+        return APR_SUCCESS;
+    }
 
     // Section to regenrate and send new Cookie Header (csrfp_token) to client
     const char *regenToken = NULL;
@@ -494,9 +497,12 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
          * - Regenrate token
          * - Send it as output header
          */
+
+
+        // To ensure Cookie is not regenrated again for this request
+        apr_table_set(r->subprocess_env, "regenToken", "false");
     }
 
-    ap_rprintf(r, "<br>output filter");
     return ap_pass_brigade(f->next, bb);
 }
 
@@ -667,6 +673,11 @@ static const command_rec csrfp_directives[] =
     { NULL }
 };
 
+static void csrfp_insert_filter(request_rec *r) {
+    ap_add_output_filter("csrfp_out_filter", NULL, r, r->connection);
+}
+
+
 /**
  * Hook registering function for mod_csrfp
  * @param: pool, apr_pool_t
@@ -681,6 +692,8 @@ static void csrfp_register_hooks(apr_pool_t *pool)
     // Handler to modify output filter
     ap_register_output_filter("csrfp_out_filter", csrfp_out_filter, NULL, AP_FTYPE_RESOURCE);
     //ap_hook_handler(csrf_handler, NULL, NULL, APR_HOOK_MIDDLE);
+
+    ap_hook_insert_filter(csrfp_insert_filter, NULL, NULL, APR_HOOK_MIDDLE);
 }
 
 
