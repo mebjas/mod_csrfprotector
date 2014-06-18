@@ -222,6 +222,17 @@ static apr_table_t *csrf_get_query(request_rec *r)
     return tbl;
 }
 
+/** 
+ * Function to append new CSRFP_TOKEN to output header
+ *
+ * @param r, request_rec object
+ *
+ * @return int 1 - for sucess, 0 - for failure
+ */
+static int setTokenCookie(request_rec *r)
+{
+    return 0;
+} 
 
 /**
  * Function to return the token value from cookie
@@ -380,7 +391,8 @@ static int csrfp_header_parser(request_rec *r)
                     break;
                 case CSRFP_ACTION_MESSAGE:
                     // Show custom Error Message
-                    return OK;
+                    ap_rprintf(r, "<h2>%s</h2>", conf->errorCustomMessage);
+                    return DONE;
                     break;
                 case CSRFP_ACTION_INTERNAL_SERVER_ERROR:
                     // Show internel Server error
