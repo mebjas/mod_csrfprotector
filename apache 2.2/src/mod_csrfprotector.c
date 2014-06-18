@@ -439,10 +439,7 @@ static int csrfp_header_parser(request_rec *r)
         } else {
             ap_rprintf(r, "<br> POST validation passed");
 
-            // Appends X-Protected-By header to output header
-            apr_table_addn(r->headers_out, "X-Protected-By", "CSRFP 0.0.1");
             //#todo: regenrate token and send as cookie header
-            return OK;
         }
 
     } else if ( !strcmp(r->method, "GET") ) {
@@ -454,6 +451,10 @@ static int csrfp_header_parser(request_rec *r)
         //      else
         //          refresh cookie in output header
     }
+
+    // Appends X-Protected-By header to output header
+    apr_table_addn(r->headers_out, "X-Protected-By", "CSRFP 0.0.1");
+    return OK;
 }
 
 /**
@@ -467,6 +468,7 @@ static int csrfp_header_parser(request_rec *r)
 static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 {
     request_rec *r = f->r;
+    apr_table_addn(r->headers_out, "output_filter", "called");
 
     /*
      * - Determine if it's html and force chunked response
@@ -476,16 +478,6 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
      */
     ap_rprintf(r, "<br>output filter");
     return ap_pass_brigade(f->next, bb);
-}
-
-static void csrfp_insert_filter(request_rec *r)
-{
-    csrfp_config *conf = ap_get_module_config(r->server->module_config,
-                                                &csrf_protector_module);
-    if (!conf->flag)
-        return;
-
-    ap_add_output_filter("csrfp_out_filter", NULL, r, r->connection);
 }
 
 /**
@@ -666,7 +658,6 @@ static void csrfp_register_hooks(apr_pool_t *pool)
     // Handler to parse incoming request and validate incoming request
     ap_hook_header_parser(csrfp_header_parser, NULL, NULL, APR_HOOK_FIRST);
 
-    ap_hook_insert_filter(csrfp_insert_filter, NULL, NULL, APR_HOOK_MIDDLE);
     // Handler to modify output filter
     ap_register_output_filter("csrfp_out_filter", csrfp_out_filter, NULL, AP_FTYPE_RESOURCE);
     //ap_hook_handler(csrf_handler, NULL, NULL, APR_HOOK_MIDDLE);
