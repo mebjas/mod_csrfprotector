@@ -222,6 +222,7 @@ static apr_table_t *csrf_get_query(request_rec *r)
     return tbl;
 }
 
+
 /**
  * Function to return the token value from cookie
  *
@@ -322,31 +323,6 @@ static int csrf_handler(request_rec *r)
 
     // Set the appropriate content type
     ap_set_content_type(r, "text/html");
-    
-
-    // If request type is POST
-    // Need to check configs weather or not a validation is needed POST
-    if ( !strcmp(r->method, "POST")) {
-        //tmp
-        ap_rprintf(r, "<br>POST request recieved");
-
-        if ( !validatePOSTtoken(r) ) {
-            ap_rprintf(r, "<br> POST validation failed");
-            //#todo: perform failed validation action
-        } else {
-            ap_rprintf(r, "<br> POST validation passed");
-            //#todo: regenrate token and send as cookie header
-        }
-
-    } else if ( !strcmp(r->method, "GET") ) {
-        //#todo:
-        //1. Check get validation is enabled for a particular request
-        //2. if yes
-        //      validate the request - if fails
-        //          take appropriate action, as per configuration
-        //      else
-        //          refresh cookie in output header
-    }
 
     //Codes below are test codes, for fiddling phase
 
@@ -365,6 +341,70 @@ static int csrf_handler(request_rec *r)
     
 
     return OK;
+}
+
+/**
+ * Callback function for header parser by Hook Registering function
+ *
+ * @param r, request_rec object
+ *
+ * @return status code, int
+ */
+static int csrfp_header_parser(request_rec *r)
+{
+    csrfp_config *conf = ap_get_module_config(r->server->module_config,
+                                                &csrf_protector_module);
+    if (!conf->flag) 
+        return OK;
+
+    // If request type is POST
+    // Need to check configs weather or not a validation is needed POST
+    if ( !strcmp(r->method, "POST")) {
+
+        if ( !validatePOSTtoken(r) ) {
+            
+            // Log this --
+            // Take actions as per configuration
+            switch (conf->action)
+            {
+                case CSRFP_ACTION_FORBIDDEN:
+                    return HTTP_FORBIDDEN;
+                    break;
+                case CSRFP_ACTION_STRIP:
+                    // Strip POST values
+                    return OK;
+                    break;
+                case CSRFP_ACTION_REDIRECT:
+                    // Redirect to custom
+                    return OK;
+                    break;
+                case CSRFP_ACTION_MESSAGE:
+                    // Show custom Error Message
+                    return OK;
+                    break;
+                case CSRFP_ACTION_INTERNAL_SERVER_ERROR:
+                    // Show internel Server error
+                    return HTTP_INTERNAL_SERVER_ERROR;
+                    break;
+                default: 
+                    return HTTP_FORBIDDEN;
+                    break;
+            }
+        } else {
+            ap_rprintf(r, "<br> POST validation passed");
+            //#todo: regenrate token and send as cookie header
+            return OK;
+        }
+
+    } else if ( !strcmp(r->method, "GET") ) {
+        //#todo:
+        //1. Check get validation is enabled for a particular request
+        //2. if yes
+        //      validate the request - if fails
+        //          take appropriate action, as per configuration
+        //      else
+        //          refresh cookie in output header
+    }
 }
 
 /**
@@ -400,6 +440,8 @@ static void *csrfp_srv_config_create(apr_pool_t *p, server_rec *s)
     config->disablesJsMessage = apr_pcalloc(p, CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH);
     strncpy(config->disablesJsMessage, DEFAULT_DISABLED_JS_MESSSAGE,
             CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH);
+
+    return config;
 }
 
 //=============================================================
@@ -539,6 +581,7 @@ static const command_rec csrfp_directives[] =
 static void csrfp_register_hooks(apr_pool_t *pool)
 {
     // Create a hook in the request handler, so we get called when a request arrives
+    ap_hook_header_parser(csrfp_header_parser, NULL, NULL, APR_HOOK_FIRST);
     ap_hook_handler(csrf_handler, NULL, NULL, APR_HOOK_MIDDLE);
 }
 
