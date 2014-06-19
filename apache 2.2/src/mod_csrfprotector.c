@@ -54,6 +54,11 @@
 #define CSRFP_ACTION_MESSAGE 3
 #define CSRFP_ACTION_INTERNAL_SERVER_ERROR 4
 
+/** States for csrfp_op_filter object **/
+#define CSRFP_OP_INIT 0
+#define CSRFP_OP_BODY_INIT 1
+#define CSRFP_OP_BODY_END 2
+#define CSRFP_OP_END 3
 
 
 //=============================================================
@@ -72,7 +77,16 @@ typedef struct
     char *disablesJsMessage;        // Message to be shown in <noscript>
     ap_regex_t *verifyGetFor;       // Path pattern for which GET requests...
                                     // ...Need to be validated as well
-}csrfp_config;
+}csrfp_config;                      // CSRFP configuraion
+
+typedef struct
+{
+    char *search;                   // Stores the item being serched (regex) 
+    int state;                      // Stores the current state of filter
+    char *script;                   // Will store the js code to be inserted
+    char *noscript;                 // Will store the <noscript>..</noscript>...
+                                    // ...Info to be inserted
+}csrfp_opf_ctx;                     // CSRFP output filter context
 
 static csrfp_config *config;
 
@@ -331,6 +345,8 @@ static int validateGETTtoken(request_rec *r)
  * @param r, request_rec object
  *
  * @return content type, string
+ *
+ * #todo: make sure we need this function -- else delete
  */
 static const char *getOutputContentType(request_rec *r) {
     const char* type = NULL;
@@ -343,6 +359,41 @@ static const char *getOutputContentType(request_rec *r) {
         type = r->content_type;
     }
     return type;
+}
+
+/**
+ * Get or create (and init) the pre request context used by the output filter
+ *
+ * @param r, request_rec object
+ * 
+ * @return context object for output filter ( csrfp_opf_ctx* )
+ */
+static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r) {
+  csrfp_opf_ctx *rctx = ap_get_module_config(r->request_config, &csrf_protector_module);
+  if(rctx == NULL) {
+    csrfp_config *conf = ap_get_module_config(r->server->module_config,
+                                                &csrf_protector_module);
+
+    rctx = apr_pcalloc(r->pool, sizeof(csrfp_opf_ctx));
+    rctx->state = CSRFP_OP_INIT;
+    rctx->search = NULL;
+
+    // Allocate memory and init <noscript> content to be injected
+    rctx->noscript = apr_psprintf(r->pool, "<noscript>\n"
+                                "%s\n"
+                                "</noscript>\n",
+                                conf->disablesJsMessage);
+
+    // Allocate memory and init <script> content to be injected
+    rctx->script = apr_psprintf(r->pool, "<script type=\"text/javascript\""
+                               " src=\"%s\">"
+                                "</script>\n",
+                                conf->jsFilePath);
+
+    // globalise this configuration
+    ap_set_module_config(r->request_config, &csrf_protector_module, rctx);
+  }
+  return rctx;
 }
 
 /**
@@ -391,6 +442,10 @@ static int failedValidationAction(request_rec *r)
             break;
     }
 }
+
+//=====================================================================
+// Handlers -- call back functions for different hooks
+//=====================================================================
 
 /**
  * Call back function registered by Hook Registering Function
