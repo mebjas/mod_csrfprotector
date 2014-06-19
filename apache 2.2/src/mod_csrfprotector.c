@@ -31,6 +31,7 @@
 #define CSRFP_TOKEN "csrfp_token"
 #define DEFAULT_POST_ENCTYPE "application/x-www-form-urlencoded"
 #define REGEN_TOKEN "true"
+#define CSRFP_CHUNKED_ONLY 0
 
 #define CSRFP_URI_MAXLENGTH 200
 #define CSRFP_ERROR_MESSAGE_MAXLENGTH 200
@@ -87,7 +88,8 @@ typedef struct
     char *script;                   // Will store the js code to be inserted
     char *noscript;                 // Will store the <noscript>..</noscript>...
                                     // ...Info to be inserted
-} csrfp_opf_ctx;                     // CSRFP output filter context
+    apr_pool_t *pool;               // pool to store prev bucket information [el]
+} csrfp_opf_ctx;                    // CSRFP output filter context
 
 static csrfp_config *config;
 
@@ -388,6 +390,8 @@ static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r) {
                                " src=\"%s\"></script>\n",
                                 conf->jsFilePath);
 
+    rctx->pool = NULL;
+
     // globalise this configuration
     ap_set_module_config(r->request_config, &csrf_protector_module, rctx);
   }
@@ -541,7 +545,7 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
     request_rec *r = f->r;
     csrfp_opf_ctx *rctx = csrfp_get_rctx(r);
     
-    apr_table_addn(r->headers_out, "output_filter", "Arrival Confirmed");   //tmp
+    //apr_table_addn(r->headers_out, "output_filter", "Arrival Confirmed");   //tmp
 
     /*
      * - Determine if it's html and force chunked response
@@ -550,10 +554,64 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
      * - set csrfp_token cookie
      * - end (all done)
      */
+    if(rctx->state == CSRFP_OP_INIT) {
+        const char *type = getOutputContentType(r);
+        if(type == NULL || strncasecmp(type, "text/html", 9) != 0) {
+            // we don't want to parse this response (no html)
+            rctx->state = CSRFP_OP_END;
+            rctx->search = NULL;
+            ap_remove_output_filter(f);
+        } else {
+            // start searching head/body to inject our script
+            if(CSRFP_CHUNKED_ONLY) {
+                // send as chunked response
+                apr_table_unset(r->headers_out, "Content-Length");
+                apr_table_unset(r->err_headers_out, "Content-Length");
+                r->chunked = 1;
+            } else {
+                // Modify the content-length header
+                int errh = 0;
+                const char* cl =  apr_table_get(r->headers_out, "Content-Length");
+                if(!cl) {
+                    errh = 1;
+                    cl =  apr_table_get(r->err_headers_out, "Content-Length");
+                }
 
-    if (APR_BRIGADE_EMPTY(bb)) {
-        return APR_SUCCESS;
+                if(cl) {
+                    // adjust non-chunked response
+                    char *length;
+                    apr_off_t s;
+                    char *errp = NULL;
+                    if(apr_strtoff(&s, cl, &errp, 10) == APR_SUCCESS) {
+                        s = s + strlen(rctx->script) + strlen(rctx->noscript);
+                        length = apr_psprintf(r->pool, "%"APR_OFF_T_FMT, s);
+                        if(!errh) {
+                            apr_table_set(r->headers_out, "Content-Length", length);
+                        } else {
+                            apr_table_set(r->err_headers_out, "Content-Length", length);
+                        }
+                    } else {
+                        // fallback to chunked
+                        r->chunked = 1;
+                        if(!errh) {
+                            apr_table_unset(r->headers_out, "Content-Length");
+                        } else {
+                            apr_table_unset(r->err_headers_out, "Content-Length");
+                        }
+                    }
+                } else {
+                    // fallback to chunked
+                    r->chunked = 1;
+                    if(!errh) {
+                        apr_table_unset(r->headers_out, "Content-Length");
+                    } else {
+                        apr_table_unset(r->err_headers_out, "Content-Length");
+                    }
+                }
+            }
+        }
     }
+
 
     // Section to regenrate and send new Cookie Header (csrfp_token) to client
     const char *regenToken = NULL;
