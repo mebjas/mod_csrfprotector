@@ -369,8 +369,12 @@ static int failedValidationAction(request_rec *r)
             break;
         case CSRFP_ACTION_REDIRECT:
             // Redirect to custom uri
-            // #Todo: ADD CODE TO PERFORM THIS
-            return DONE;
+            if (strlen(conf->errorRedirectionUri) > 0) {
+                apr_table_add(r->headers_out, "Location", conf->errorRedirectionUri);
+                return HTTP_MOVED_PERMANENTLY;
+            } else {
+                return HTTP_FORBIDDEN;
+            }
             break;
         case CSRFP_ACTION_MESSAGE:
             // Show custom Error Message
