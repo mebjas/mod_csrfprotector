@@ -25,6 +25,7 @@
 #include "apr_general.h"
 #include "apr_buckets.h"
 #include "apr_lib.h"
+#include "apr_strings.h"
 
 /** definations **/
 #define CSRFP_TOKEN "csrfp_token"
@@ -77,16 +78,16 @@ typedef struct
     char *disablesJsMessage;        // Message to be shown in <noscript>
     ap_regex_t *verifyGetFor;       // Path pattern for which GET requests...
                                     // ...Need to be validated as well
-}csrfp_config;                      // CSRFP configuraion
+} csrfp_config;                      // CSRFP configuraion
 
 typedef struct
 {
-    char *search;                   // Stores the item being serched (regex) 
+    ap_regex_t *search;             // Stores the item being serched (regex) 
     int state;                      // Stores the current state of filter
     char *script;                   // Will store the js code to be inserted
     char *noscript;                 // Will store the <noscript>..</noscript>...
                                     // ...Info to be inserted
-}csrfp_opf_ctx;                     // CSRFP output filter context
+} csrfp_opf_ctx;                     // CSRFP output filter context
 
 static csrfp_config *config;
 
@@ -376,24 +377,60 @@ static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r) {
 
     rctx = apr_pcalloc(r->pool, sizeof(csrfp_opf_ctx));
     rctx->state = CSRFP_OP_INIT;
-    rctx->search = NULL;
+    rctx->search = ap_pregcomp(r->pool, "<body(.*)>", AP_REG_ICASE);
 
     // Allocate memory and init <noscript> content to be injected
-    rctx->noscript = apr_psprintf(r->pool, "<noscript>\n"
-                                "%s\n"
-                                "</noscript>\n",
+    rctx->noscript = apr_psprintf(r->pool, "<noscript>%s</noscript>",
                                 conf->disablesJsMessage);
 
     // Allocate memory and init <script> content to be injected
     rctx->script = apr_psprintf(r->pool, "<script type=\"text/javascript\""
-                               " src=\"%s\">"
-                                "</script>\n",
+                               " src=\"%s\"></script>\n",
                                 conf->jsFilePath);
 
     // globalise this configuration
     ap_set_module_config(r->request_config, &csrf_protector_module, rctx);
   }
   return rctx;
+}
+
+/**
+ * Injects a new bucket containing a reference to the javascript.
+ *
+ * @param r, request_rec object
+ * @param bb, bucket_brigade object
+ * @param b Bucket to split and insert date new bucket at the postion of the marker
+ * @param rctx Request context containing the state of the parser
+ * @param buf String representation of the bucket
+ * @param sz Position to split the bucket and insert the new content
+ * @param flag, 0 - for <noscript> insertion, 1 for <script> insertion
+ *
+ * @return Bucket to continue searching (at the marker)
+ */
+static apr_bucket *csrfp_inject(request_rec *r, apr_bucket_brigade *bb, apr_bucket *b,
+                                    csrfp_opf_ctx *rctx, const char *buf,
+                                    apr_size_t sz, int flag) {
+    apr_bucket *e;
+    apr_bucket_split(b, sz);
+    b = APR_BUCKET_NEXT(b);
+
+    const char* insert = (flag == 1)? rctx->script : rctx->noscript;
+
+    e = apr_bucket_pool_create(insert, strlen(insert), r->pool, bb->bucket_alloc);
+
+    APR_BUCKET_INSERT_BEFORE(b, e);
+
+    if (flag) {
+        // script has been injected
+        rctx->state = CSRFP_OP_BODY_END;
+        rctx->search = NULL;
+    } else {
+        // <noscript> has been injected
+        rctx->state = CSRFP_OP_BODY_INIT;
+        ap_regcomp(rctx->search, "</body>", 0);
+    }
+
+    return b;
 }
 
 /**
@@ -446,37 +483,6 @@ static int failedValidationAction(request_rec *r)
 //=====================================================================
 // Handlers -- call back functions for different hooks
 //=====================================================================
-
-/**
- * Call back function registered by Hook Registering Function
- *
- * @param: r, request_rec object
- *
- * @return: status code, int
- */
-static int csrf_handler(request_rec *r)
-{
-
-    // Set the appropriate content type
-    ap_set_content_type(r, "text/html");
-
-    //Codes below are test codes, for fiddling phase
-
-    // Code to print the configurations
-    ap_rprintf(r, "<br>Flag = %d", config->flag);
-    ap_rprintf(r, "<br>action = %d", config->action);
-    ap_rprintf(r, "<br>errorRedirectionUri = %s", config->errorRedirectionUri);
-    ap_rprintf(r, "<br>errorCustomMessage = %s", config->errorCustomMessage);
-    ap_rprintf(r, "<br>jsFilePath = %s", config->jsFilePath);
-    ap_rprintf(r, "<br>tokenLength = %d", config->tokenLength);
-    ap_rprintf(r, "<br>disablesJsMessage = %s", config->disablesJsMessage);
-    //ap_rprintf(r, "<br>verifyGetFor = %s", config->verifyGetFor);
-    
-
-    ap_rprintf(r, "<br> content type = %s", r->content_type);
-
-    return OK;
-}
 
 /**
  * Callback function for header parser by Hook Registering function
@@ -533,7 +539,9 @@ static int csrfp_header_parser(request_rec *r)
 static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 {
     request_rec *r = f->r;
-    apr_table_addn(r->headers_out, "output_filter", "Arrival Confirmed");
+    csrfp_opf_ctx *rctx = csrfp_get_rctx(r);
+    
+    apr_table_addn(r->headers_out, "output_filter", "Arrival Confirmed");   //tmp
 
     /*
      * - Determine if it's html and force chunked response
