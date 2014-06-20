@@ -83,7 +83,7 @@ typedef struct
 
 typedef struct
 {
-    ap_regex_t *search;             // Stores the item being serched (regex) 
+    char *search;                   // Stores the item being serched (regex) 
     int state;                      // Stores the current state of filter
     char *script;                   // Will store the js code to be inserted
     char *noscript;                 // Will store the <noscript>..</noscript>...
@@ -91,6 +91,8 @@ typedef struct
     apr_pool_t *pool;               // pool to store prev bucket information [el]
     int clstate;                    // State of Content-Length header 0 - for not ...
                                     // ...modified, 1 for modified or need not modify
+    char *prev_buf;                // Buffer to store content of current bb->b buffer ...
+                                    // ... for next iteration in op filter [el]
 } csrfp_opf_ctx;                    // CSRFP output filter context
 
 static csrfp_config *config;
@@ -109,6 +111,53 @@ static apr_table_t *read_post(request_rec *r);
 //=============================================================
 // Functions
 //=============================================================
+
+/**
+ * Similar to standard strstr() but case insensitive and lenght limitation
+ * (char which is not 0 terminated).
+ *
+ * @param s1 String to search in
+ * @param s2 Pattern to ind
+ * @param len Length of s1
+ *
+ * @return pointer to the beginning of the substring s2 within s1, or NULL
+ *         if the substring is not found
+ */
+static const char *csrfp_strncasestr(const char *s1, const char *s2, int len) {
+  const char *e1 = &s1[len-1];
+  char *p1, *p2;
+  if (*s2 == '\0') {
+    /* an empty s2 */
+    return((char *)s1);
+  }
+  while(1) {
+    for ( ; (*s1 != '\0') && (s1 <= e1) && (apr_tolower(*s1) != apr_tolower(*s2)); s1++);
+    if (*s1 == '\0' || s1 > e1) {
+      return(NULL);
+    }
+
+    /* found first character of s2, see if the rest matches */
+    p1 = (char *)s1;
+    p2 = (char *)s2;
+    for (++p1, ++p2; (apr_tolower(*p1) == apr_tolower(*p2)) && (p1 <= e1); ++p1, ++p2) {
+      if((p1 > e1) && (*p2 != '\0')) {
+        // reached the end without match
+        return NULL;
+      }
+      if (*p2 == '\0') {
+        /* both strings ended together */
+        return((char *)s1);
+      }
+    }
+    if (*p2 == '\0') {
+      /* second string ended, a match */
+      break;
+    }
+    /* didn't find a match here, try starting at next character in s1 */
+    s1++;
+  }
+  return((char *)s1);
+}
 
 /**
  * function to load POST data from request buffer
@@ -224,7 +273,7 @@ static char* generateToken(request_rec *r, int length)
  *
  * @return tbl, Table of NULL if no parameter are available
  */
-static apr_table_t *csrf_get_query(request_rec *r)
+static apr_table_t *csrfp_get_query(request_rec *r)
 {
     apr_table_t *tbl = NULL;
     const char *args = r->args;
@@ -328,7 +377,7 @@ static int validateGETTtoken(request_rec *r)
 {
     //get table of all GET key-value pairs
     apr_table_t *GET = NULL;
-    GET = csrf_get_query(r);
+    GET = csrfp_get_query(r);
 
     if (!GET) return 0;
 
@@ -381,10 +430,10 @@ static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r) {
 
     rctx = apr_pcalloc(r->pool, sizeof(csrfp_opf_ctx));
     rctx->state = CSRFP_OP_INIT;
-    rctx->search = ap_pregcomp(r->pool, "<body(.*)>", AP_REG_ICASE);
+    rctx->search = apr_psprintf(r->pool, "<body");
 
     // Allocate memory and init <noscript> content to be injected
-    rctx->noscript = apr_psprintf(r->pool, "<noscript>%s</noscript>",
+    rctx->noscript = apr_psprintf(r->pool, "\n<noscript>\n%s\n</noscript>",
                                 conf->disablesJsMessage);
 
     // Allocate memory and init <script> content to be injected
@@ -393,8 +442,8 @@ static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r) {
                                 conf->jsFilePath);
 
     rctx->pool = NULL;
-
     rctx->clstate = 0;
+    rctx->prev_buf = NULL;
 
     // globalise this configuration
     ap_set_module_config(r->request_config, &csrf_protector_module, rctx);
@@ -435,7 +484,7 @@ static apr_bucket *csrfp_inject(request_rec *r, apr_bucket_brigade *bb, apr_buck
     } else {
         // <noscript> has been injected
         rctx->state = CSRFP_OP_BODY_INIT;
-        ap_regcomp(rctx->search, "</body>", 0);
+        strncpy(rctx->search, "</body>", strlen("</body>"));
     }
 
     return b;
@@ -549,7 +598,7 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
     request_rec *r = f->r;
     csrfp_opf_ctx *rctx = csrfp_get_rctx(r);
     
-    //apr_table_addn(r->headers_out, "output_filter", "Arrival Confirmed");   //tmp
+    //apr_table_addn(r->headers_out, "output_filter", "Arrival Confirmed");
 
     /*
      * - Determine if it's html and force chunked response
@@ -610,6 +659,7 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                             apr_table_unset(r->err_headers_out, "Content-Length");
                         }
                     }
+
                     rctx->clstate = 1;  // Content-Length need not be modified anymore
                 } else {
                     // This means Content-Length header has not yet been generated
@@ -620,7 +670,83 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
     }
 
     // start searching within this brigade...
-    
+    if (rctx->search) {
+        apr_bucket *b;
+        int loop = 0;
+
+        /**
+         * pool to allocate buckets from (used to insert buffer from previous loop)
+         * This pool survices this filter call in we destroy it when we are called
+         * The next time because we expect that the bucket has been send to the network
+         **/
+        apr_pool_t *pool;
+        apr_pool_create(&pool, r->pool);
+        for (b = APR_BRIGADE_FIRST(bb); b != APR_BRIGADE_SENTINEL(bb); b = APR_BUCKET_NEXT(b)) {
+            if (APR_BUCKET_IS_EOS(b)) {
+                /* If we ever see an EOS, make sure to FLUSH. */
+                apr_bucket *flush = apr_bucket_flush_create(f->c->bucket_alloc);
+                APR_BUCKET_INSERT_BEFORE(b, flush);
+            }
+
+            if (!(APR_BUCKET_IS_METADATA(b))) {
+                const char *buf;
+                apr_size_t nbytes;
+                restart:
+                if (apr_bucket_read(b, &buf, &nbytes, APR_BLOCK_READ) == APR_SUCCESS) {
+                    if (nbytes > 0) {
+                        const char *marker = NULL;
+                        apr_size_t sz;
+                        marker = csrfp_strncasestr(buf, rctx->search, nbytes);
+                        if (marker) {    
+                            // ..search was found
+                            if (rctx->state == CSRFP_OP_INIT) {
+
+                                // Seaching for body
+                                // Search for first closing tag
+                                apr_size_t sz = strlen(buf) - strlen(marker);
+
+                                char *c = marker;
+                                int offset = 0;
+                                for ( ; *c != '>'; ++offset, c++);
+                                sz += ++offset;
+
+                                b = csrfp_inject(r, bb, b, rctx, buf, sz, 0);
+                                goto restart;
+                            } else if (rctx->state == CSRFP_OP_BODY_INIT) {
+                                apr_size_t sz = strlen(buf) - strlen(marker) + sizeof("</body>");
+                                b = csrfp_inject(r, bb, b, rctx, buf, sz, 1);
+                            }
+                        }
+
+                        /*
+                         * 1. overlap with existing buffer to overcome problems like
+                         *      ...</bo] [dy>... in two buffers
+                         * #todo
+                         */
+                        /*
+                        char *current_buf = NULL;
+                        int prev_buf_offset = 0;
+                        if (rctx->prev_buf)
+                        {
+                            // current_buf  = prev_buf + buf
+                            prev_buf_offset = strlen(rctx->prev_buf);
+                        } else {
+                            // current_buf = buf
+                        }
+                        // prev_buf <- buf, buf <- null
+                        */
+
+                    }
+                }
+            }
+        loop++;
+    }
+    if(rctx->pool) {
+      // this data is no longer needed
+      apr_pool_destroy(rctx->pool);
+    }
+    rctx->pool = pool; // store pool (until the buckets are sent)
+  }
 
 
     // Section to regenrate and send new Cookie Header (csrfp_token) to client
