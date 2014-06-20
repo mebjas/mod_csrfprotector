@@ -437,7 +437,7 @@ static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r) {
                                 conf->disablesJsMessage);
 
     // Allocate memory and init <script> content to be injected
-    rctx->script = apr_psprintf(r->pool, "<script type=\"text/javascript\""
+    rctx->script = apr_psprintf(r->pool, "\n<script type=\"text/javascript\""
                                " src=\"%s\"></script>\n",
                                 conf->jsFilePath);
 
@@ -713,7 +713,7 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                                 b = csrfp_inject(r, bb, b, rctx, buf, sz, 0);
                                 goto restart;
                             } else if (rctx->state == CSRFP_OP_BODY_INIT) {
-                                apr_size_t sz = strlen(buf) - strlen(marker) + sizeof("</body>");
+                                apr_size_t sz = strlen(buf) - strlen(marker) + sizeof("</body>") - 1;
                                 b = csrfp_inject(r, bb, b, rctx, buf, sz, 1);
                             }
                         }
