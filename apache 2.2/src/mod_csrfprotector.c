@@ -1,5 +1,5 @@
 /**
- * Source code of mod_csrfprotector, Apache Module to mitigarte
+ * Source code of mod_csrfprotector, Apache Module to mitigate
  * CSRF vulnerability in web applications
  */
 
