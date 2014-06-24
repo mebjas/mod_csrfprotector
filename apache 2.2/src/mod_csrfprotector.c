@@ -580,6 +580,10 @@ static int csrfp_header_parser(request_rec *r)
     // append it to output header -- Regenrate token
     apr_table_add(r->subprocess_env, "regenToken", REGEN_TOKEN);
 
+    // Add environment variable for php to inform request has been
+    //      validated by mod_csrfp
+    apr_table_add(r->subprocess_env, "mod_csrfp_enabled", "true");
+
     // Appends X-Protected-By header to output header
     apr_table_addn(r->headers_out, "X-Protected-By", "CSRFP 0.0.1");
     return OK;
