@@ -516,7 +516,7 @@ static int failedValidationAction(request_rec *r)
         case CSRFP_ACTION_STRIP:
             // Strip POST values - and forward the request
             if (!strcmp(r->method, "GET")) {
-                apr_table_clear(r->args);
+                strncpy(r->args, "\0", 1);
             } else if (!strcmp(r->method, "POST")) {
                 // #todo: code to perform this
             }
@@ -619,6 +619,7 @@ static int csrfp_header_parser(request_rec *r)
         //          take appropriate action, as per configuration
         //      else
         //          refresh cookie in output header
+        return failedValidationAction(r);
     }
 
     // Information for output_filter to regenrate token and
