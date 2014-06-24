@@ -515,7 +515,11 @@ static int failedValidationAction(request_rec *r)
             break;
         case CSRFP_ACTION_STRIP:
             // Strip POST values - and forward the request
-            // #Todo: ADD CODE TO PERFORM THIS
+            if (!strcmp(r->method, "GET")) {
+                apr_table_clear(r->args);
+            } else if (!strcmp(r->method, "POST")) {
+                // #todo: code to perform this
+            }
             return OK;
             break;
         case CSRFP_ACTION_REDIRECT:
@@ -597,8 +601,6 @@ static int csrfp_header_parser(request_rec *r)
         // No need of validation, go ahead!
         return OK;
     }
-
-    //ap_add_output_filter("csrfp_out_filter", NULL, r, r->connection);
 
     // If request type is POST
     // Need to check configs weather or not a validation is needed POST
