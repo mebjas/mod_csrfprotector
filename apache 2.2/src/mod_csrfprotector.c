@@ -104,9 +104,11 @@ module AP_MODULE_DECLARE_DATA csrf_protector_module;
 
 //Definations for functions
 static char *generateToken(request_rec *r, int length);
-static int util_read(request_rec *r, const char **rbuf);
 static apr_table_t *read_post(request_rec *r);
-
+static const char *csrfp_strncasestr(const char *s1, const char *s2, int len);
+static apr_table_t *csrfp_get_query(request_rec *r);
+static char* getCookieToken(request_rec *r);
+static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r);
 
 //=============================================================
 // Functions
