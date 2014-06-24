@@ -94,7 +94,7 @@ var CSRFP = {
 			
 			return result;
 		};
-	}
+	},
 	/**
 	 * Initialises the CSRFProtector js script
 	 *
