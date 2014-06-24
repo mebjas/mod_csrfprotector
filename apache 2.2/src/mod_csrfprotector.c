@@ -666,7 +666,8 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
      */
     if(rctx->state == CSRFP_OP_INIT) {
         const char *type = getOutputContentType(r);
-        if(type == NULL || strncasecmp(type, "text/html", 9) != 0) {
+        if(type == NULL || ( strncasecmp(type, "text/html", 9) != 0
+            && strncasecmp(type, "text/xhtml", 10) != 0) ) {
             // we don't want to parse this response (no html)
             rctx->state = CSRFP_OP_END;
             rctx->search = NULL;
