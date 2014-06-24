@@ -62,6 +62,8 @@
 #define CSRFP_OP_BODY_END 2
 #define CSRFP_OP_END 3
 
+#define CSRFP_IGNORE_PATTERN ".*(jpg)|(jpeg)|(gif)|(png)|(js)|(css)|(xml)$"
+#define CSRFP_IGNORE_TEXT "csrfp_ignore_set"
 
 //=============================================================
 // Definations of all data structures to be used later
@@ -79,6 +81,8 @@ typedef struct
     char *disablesJsMessage;        // Message to be shown in <noscript>
     ap_regex_t *verifyGetFor;       // Path pattern for which GET requests...
                                     // ...Need to be validated as well
+    ap_regex_t *ignore_pattern;     // Path pattern for which validation...
+                                    // ...is Not needed
 } csrfp_config;                      // CSRFP configuraion
 
 typedef struct
@@ -539,6 +543,38 @@ static int failedValidationAction(request_rec *r)
     }
 }
 
+/**
+ * Function to decide weather to validate current request
+ * Depending upon requested file, matched against ignore pattern
+ *
+ * @param: r, request_rec object
+ *
+ * @return: int, - 1 if validation needed, 0 otherwise
+ */
+static int needvalidation(request_rec *r)
+{
+    /**
+     * #ask: do we need to log cases when we do not validate?
+     */
+    if (apr_table_get(r->subprocess_env, CSRFP_IGNORE_TEXT))
+        return 0;
+
+    csrfp_config *conf = ap_get_module_config(r->server->module_config,
+                                                &csrf_protector_module);
+    if(r->parsed_uri.path) {
+        const char *path = strrchr(r->parsed_uri.path, '/');
+        // faster than match against a long string
+        if(path == NULL) {
+            path = r->parsed_uri.path;
+        }
+        if(ap_regexec(conf->ignore_pattern, path, 0, NULL, 0) == 0) {
+            apr_table_addn(r->subprocess_env, CSRFP_IGNORE_TEXT, "m");
+            return 0;
+        }
+    }
+    return 1;
+}
+
 //=====================================================================
 // Handlers -- call back functions for different hooks
 //=====================================================================
@@ -556,6 +592,11 @@ static int csrfp_header_parser(request_rec *r)
                                                 &csrf_protector_module);
     if (!conf->flag) 
         return OK;
+
+    if (!needvalidation(r)) {
+        // No need of validation, go ahead!
+        return OK;
+    }
 
     //ap_add_output_filter("csrfp_out_filter", NULL, r, r->connection);
 
@@ -602,6 +643,16 @@ static int csrfp_header_parser(request_rec *r)
 static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 {
     request_rec *r = f->r;
+
+    /**
+     * if request  file is image or js, ignore the filter on the top itself
+     */
+    if (!needvalidation(r)) {
+        // No need of validation, go ahead!
+        ap_remove_output_filter(f);
+        return ap_pass_brigade(f->next, bb);
+    }
+
     csrfp_opf_ctx *rctx = csrfp_get_rctx(r);
     
     //apr_table_addn(r->headers_out, "output_filter", "Arrival Confirmed");
@@ -836,6 +887,9 @@ static void *csrfp_srv_config_create(apr_pool_t *p, server_rec *s)
     config->disablesJsMessage = apr_pcalloc(p, CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH);
     strncpy(config->disablesJsMessage, DEFAULT_DISABLED_JS_MESSSAGE,
             CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH);
+
+    // Allocate memory and set regex for ignore-pattern regex object
+    config->ignore_pattern = ap_pregcomp(p, CSRFP_IGNORE_PATTERN, AP_REG_ICASE);
 
     return config;
 }
