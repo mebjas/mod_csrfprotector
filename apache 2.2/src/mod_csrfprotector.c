@@ -515,7 +515,8 @@ static int failedValidationAction(request_rec *r)
             break;
         case CSRFP_ACTION_STRIP:
             // Strip POST values - and forward the request
-            if (!strcmp(r->method, "GET")) {
+            if (!strcmp(r->method, "GET")
+                && r->args) {
                 strncpy(r->args, "\0", 1);
             } else if (!strcmp(r->method, "POST")) {
                 // #todo: code to perform this
@@ -824,7 +825,6 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
         // To ensure Cookie is not regenrated again for this request
         apr_table_set(r->subprocess_env, "regenToken", "false");
     }
-
     return ap_pass_brigade(f->next, bb);
 }
 
