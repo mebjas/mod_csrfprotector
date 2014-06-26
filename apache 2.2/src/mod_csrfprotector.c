@@ -32,6 +32,8 @@
 #define DEFAULT_POST_ENCTYPE "application/x-www-form-urlencoded"
 #define CSRFP_REGEN_TOKEN "true"
 #define CSRFP_CHUNKED_ONLY 0
+#define CSRFP_OVERLAP_BUCKET_SIZE 8
+#define CSRFP_OVERLAP_BUCKET_DEFAULT "--------"
 
 #define CSRFP_URI_MAXLENGTH 200
 #define CSRFP_ERROR_MESSAGE_MAXLENGTH 200
@@ -92,10 +94,9 @@ typedef struct
     char *script;                   // Will store the js code to be inserted
     char *noscript;                 // Will store the <noscript>..</noscript>...
                                     // ...Info to be inserted
-    apr_pool_t *pool;               // pool to store prev bucket information [el]
     int clstate;                    // State of Content-Length header 0 - for not ...
                                     // ...modified, 1 for modified or need not modify
-    char *prev_buf;                // Buffer to store content of current bb->b buffer ...
+    char *overlap_buf;              // Buffer to store content of current bb->b buffer ...
                                     // ... for next iteration in op filter [el]
 } csrfp_opf_ctx;                    // CSRFP output filter context
 
@@ -459,9 +460,10 @@ static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r) {
                                " src=\"%s\"></script>\n",
                                 conf->jsFilePath);
 
-    rctx->pool = NULL;
     rctx->clstate = 0;
-    rctx->prev_buf = NULL;
+    rctx->overlap_buf = apr_pcalloc(r->pool, CSRFP_OVERLAP_BUCKET_SIZE);
+    strncpy(rctx->overlap_buf,
+        CSRFP_OVERLAP_BUCKET_DEFAULT, CSRFP_OVERLAP_BUCKET_SIZE);
 
     // globalise this configuration
     ap_set_module_config(r->request_config, &csrf_protector_module, rctx);
@@ -502,7 +504,7 @@ static apr_bucket *csrfp_inject(request_rec *r, apr_bucket_brigade *bb, apr_buck
     } else {
         // <noscript> has been injected
         rctx->state = CSRFP_OP_BODY_INIT;
-        strncpy(rctx->search, "</body>", strlen("</body>"));
+        apr_cpystrn(rctx->search, "</body>", strlen("</body>"));
     }
 
     return b;
@@ -659,7 +661,6 @@ static int csrfp_header_parser(request_rec *r)
 static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 {
     request_rec *r = f->r;
-
     /**
      * if request  file is image or js, ignore the filter on the top itself
      */
@@ -710,7 +711,6 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                 if(!cl) {
                     errh = 1;
                     cl =  apr_table_get(r->err_headers_out, "Content-Length");
-                    apr_table_addn(r->headers_out, "output_filter", "+1");
                 }
 
                 if(cl) {
@@ -749,15 +749,7 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
     // start searching within this brigade...
     if (rctx->search) {
         apr_bucket *b;
-        int loop = 0;
 
-        /**
-         * pool to allocate buckets from (used to insert buffer from previous loop)
-         * This pool survices this filter call in we destroy it when we are called
-         * The next time because we expect that the bucket has been send to the network
-         **/
-        apr_pool_t *pool;
-        apr_pool_create(&pool, r->pool);
         for (b = APR_BRIGADE_FIRST(bb); b != APR_BRIGADE_SENTINEL(bb); b = APR_BUCKET_NEXT(b)) {
             if (APR_BUCKET_IS_EOS(b)) {
                 /* If we ever see an EOS, make sure to FLUSH. */
@@ -768,64 +760,83 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
             if (!(APR_BUCKET_IS_METADATA(b))) {
                 const char *buf;
                 apr_size_t nbytes;
+                int findBracketOnly = 0;
+                /**
+                 * Concept: While searching for a string say '<body(.*)>' in a buffer
+                 * 4 cases are possible in a bucket
+                 *  1. '<body' found & '>' found
+                 *  2. '<body' found & '>' not found i.e. '>' in next bucket
+                 *  3. '<body' not found, but cause of bucket overlap, for ex
+                 *      ... '<bo' in one bucket, 'dy(.*)>' in another
+                 *  4. '<body' not found, no overlap issue
+                 */
                 restart:
                 if (apr_bucket_read(b, &buf, &nbytes, APR_BLOCK_READ) == APR_SUCCESS) {
                     if (nbytes > 0) {
+                        // Create a new string = overlap_buf + buf
+                        const char *nbuf = apr_pstrcat(r->pool, rctx->overlap_buf,
+                                                buf, NULL);
                         const char *marker = NULL;
                         apr_size_t sz;
-                        marker = csrfp_strncasestr(buf, rctx->search, nbytes);
-                        if (marker) {    
+                        marker = csrfp_strncasestr(nbuf, rctx->search, nbytes);
+                        //apr_table_addn(r->headers_out, "xyz", marker);
+                        if (marker || findBracketOnly) {
                             // ..search was found
-                            if (rctx->state == CSRFP_OP_INIT) {
+                            if (rctx->state == CSRFP_OP_INIT
+                                || findBracketOnly) {
 
-                                // Seaching for body
-                                // Search for first closing tag
-                                apr_size_t sz = strlen(buf) - strlen(marker);
+                                // Seach for '<body' now searching for first '>'
+                                // Or checking if it does not exist in current bucket
+                                apr_size_t buflen = strlen(buf);
 
-                                const char *c = marker;
-                                int offset = 0;
-                                for ( ; *c != '>'; ++offset, c++);
-                                sz += ++offset;
+                                // Setting for case - 2, '<body' found in prev bucket
+                                apr_size_t markerlen = 0;
+                                apr_size_t sz = 0;
+                                const char *c = buf;
 
-                                b = csrfp_inject(r, bb, b, rctx, buf, sz, 0);
+                                if (!findBracketOnly) {
+                                    // setting for case - 1 '<body' in same bucket
+                                    markerlen = strlen(marker);
+                                    sz = buflen - markerlen;
+                                    c = marker;
+                                }
+
+                                int offset = 0, flag = 0;
+                                for ( ; *c != '>'; offset++, c++) {
+                                    if ((offset + markerlen) == buflen) {
+                                        ++flag;
+                                        break;
+                                    }
+                                }
+
+                                if (!flag) {
+                                    // case - 1, <body and > in same bucket
+                                    sz += ++offset;
+                                    b = csrfp_inject(r, bb, b, rctx, buf, sz, 0);
+                                    findBracketOnly = 0;
+                                } else {
+                                    // case - 2, <body found, need to find > in next buffer
+                                    b = APR_BUCKET_NEXT(b);
+                                    ++findBracketOnly;
+                                }
+                                
                                 goto restart;
                             } else if (rctx->state == CSRFP_OP_BODY_INIT) {
                                 apr_size_t sz = strlen(buf) - strlen(marker) + sizeof("</body>") - 1;
                                 b = csrfp_inject(r, bb, b, rctx, buf, sz, 1);
                             }
-                        }
-
-                        /*
-                         * 1. overlap with existing buffer to overcome problems like
-                         *      ...</bo] [dy>... in two buffers
-                         * #todo
-                         */
-                        /*
-                        char *current_buf = NULL;
-                        int prev_buf_offset = 0;
-                        if (rctx->prev_buf)
-                        {
-                            // current_buf  = prev_buf + buf
-                            prev_buf_offset = strlen(rctx->prev_buf);
                         } else {
-                            // current_buf = buf
+                            // case - 3 or 4 '<body' not found in current bucket
+                            const char *cptr = buf + (sizeof buf) - CSRFP_OVERLAP_BUCKET_SIZE;
+                            apr_cpystrn(rctx->overlap_buf, cptr, CSRFP_OVERLAP_BUCKET_SIZE);
                         }
-                        // prev_buf <- buf, buf <- null
-                        */
-
                     }
                 }
             }
-            loop++;
         }
-        if(rctx->pool) {
-          // this data is no longer needed
-          apr_pool_destroy(rctx->pool);
-        }
-        rctx->pool = pool; // store pool (until the buckets are sent)
     }
     
-    char *regenToken = apr_table_get(r->subprocess_env, "regen_csrfptoken");
+    const char *regenToken = apr_table_get(r->subprocess_env, "regen_csrfptoken");
     if (regenToken && !strcasecmp(regenToken, CSRFP_REGEN_TOKEN)) {
         /*
          * - Regenrate token
