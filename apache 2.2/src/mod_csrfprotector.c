@@ -250,28 +250,24 @@ static apr_table_t *read_post(request_rec *r)
  */
 static char* generateToken(request_rec *r, int length)
 {
-    const char* stringset = "ABCDEFGHIJKLMNOPQRSTWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-
-    /**
-     * @procedure: Generate a PRNG of length 128, retrun substr of length -- length
-     */
+    // #todo - can add symbols like -_.,!+^@ to charset
+    const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJK1234567890";
     char *token = NULL;
     token = apr_pcalloc(r->pool, sizeof(char) * length);
-    int i;
 
-    for (i = 0; i < length; i++) {
-        //Generate a random no between 0 and 124
-        int rno = rand() % 123 + 1;
-        if (rno < 62) {
-            token[i] = stringset[rno];
-        } else {
-            token[i] = stringset[rno - 62];
+    time_t t;
+    /* Intializes random number generator */
+    srand((unsigned) time(&t));
+
+    if (length) {
+        --length;
+        int n = 0;
+        for ( ; n < length; n++) {
+            int key = rand() % (int) (sizeof charset - 1);
+            token[n] = charset[key];
         }
+        token[length] = '\0';
     }
-
-    char *end = token + length;
-    end = '\0';
-
     return token;
 }
 
@@ -744,9 +740,7 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                 } else {
                     // This means Content-Length header has not yet been generated
                     // #todo need to do something about this
-                    apr_table_addn(r->headers_out, "output_filter", "+2");
-                    int len = atoi(rctx->script) +atoi(rctx->noscript);
-                    apr_table_setn(r->headers_out, "Content-Length", apr_itoa(r->pool, len));
+
                 }
             }
         }
