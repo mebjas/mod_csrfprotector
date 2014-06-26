@@ -30,7 +30,7 @@
 /** definations **/
 #define CSRFP_TOKEN "csrfp_token"
 #define DEFAULT_POST_ENCTYPE "application/x-www-form-urlencoded"
-#define REGEN_TOKEN "true"
+#define CSRFP_REGEN_TOKEN "true"
 #define CSRFP_CHUNKED_ONLY 0
 
 #define CSRFP_URI_MAXLENGTH 200
@@ -269,6 +269,9 @@ static char* generateToken(request_rec *r, int length)
         }
     }
 
+    char *end = token + length;
+    end = '\0';
+
     return token;
 }
 
@@ -304,11 +307,20 @@ static apr_table_t *csrfp_get_query(request_rec *r)
  *
  * @param r, request_rec object
  *
- * @return int 1 - for sucess, 0 - for failure
+ * @return void
  */
-static int setTokenCookie(request_rec *r)
+static void setTokenCookie(request_rec *r)
 {
-    return 0;
+    csrfp_config *conf = ap_get_module_config(r->server->module_config,
+                                                &csrf_protector_module);
+    char *token = NULL, *cookie = NULL;
+
+    // Generate a new token
+    token = generateToken(r, conf->tokenLength);
+
+    // Send token as cookie header
+    cookie = apr_psprintf(r->pool, "%s=%s; Version=1; Path=/;", CSRFP_TOKEN, token);
+    apr_table_setn(r->headers_out, "Set-Cookie", cookie);
 } 
 
 /**
@@ -323,11 +335,15 @@ static char* getCookieToken(request_rec *r)
     const char *cookie = NULL;
     cookie = apr_table_get(r->headers_in, "Cookie");
 
-    if (cookie == NULL) {
+    if (!cookie)
         return NULL;
-    }
 
     char *p = strstr(cookie, CSRFP_TOKEN);
+
+    // if csrfp_token doesnot exist
+    if (!p)
+        return NULL;
+
     int totalLen = strlen(p), pos = 0, i;
 
     for (i = 0; i < totalLen; i++) {
@@ -620,12 +636,12 @@ static int csrfp_header_parser(request_rec *r)
         //          take appropriate action, as per configuration
         //      else
         //          refresh cookie in output header
-        return failedValidationAction(r);
     }
 
     // Information for output_filter to regenrate token and
     // append it to output header -- Regenrate token
-    apr_table_add(r->subprocess_env, "regenToken", REGEN_TOKEN);
+    // Section to regenrate and send new Cookie Header (csrfp_token) to client
+    apr_table_add(r->subprocess_env, "regen_csrfptoken", CSRFP_REGEN_TOKEN);
 
     // Add environment variable for php to inform request has been
     //      validated by mod_csrfp
@@ -657,6 +673,7 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
         return ap_pass_brigade(f->next, bb);
     }
 
+    // Get the context config
     csrfp_opf_ctx *rctx = csrfp_get_rctx(r);
     
     //apr_table_addn(r->headers_out, "output_filter", "Arrival Confirmed");
@@ -697,6 +714,7 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                 if(!cl) {
                     errh = 1;
                     cl =  apr_table_get(r->err_headers_out, "Content-Length");
+                    apr_table_addn(r->headers_out, "output_filter", "+1");
                 }
 
                 if(cl) {
@@ -726,6 +744,9 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                 } else {
                     // This means Content-Length header has not yet been generated
                     // #todo need to do something about this
+                    apr_table_addn(r->headers_out, "output_filter", "+2");
+                    int len = atoi(rctx->script) +atoi(rctx->noscript);
+                    apr_table_setn(r->headers_out, "Content-Length", apr_itoa(r->pool, len));
                 }
             }
         }
@@ -767,7 +788,7 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                                 // Search for first closing tag
                                 apr_size_t sz = strlen(buf) - strlen(marker);
 
-                                char *c = marker;
+                                const char *c = marker;
                                 int offset = 0;
                                 for ( ; *c != '>'; ++offset, c++);
                                 sz += ++offset;
@@ -801,29 +822,22 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                     }
                 }
             }
-        loop++;
+            loop++;
+        }
+        if(rctx->pool) {
+          // this data is no longer needed
+          apr_pool_destroy(rctx->pool);
+        }
+        rctx->pool = pool; // store pool (until the buckets are sent)
     }
-    if(rctx->pool) {
-      // this data is no longer needed
-      apr_pool_destroy(rctx->pool);
-    }
-    rctx->pool = pool; // store pool (until the buckets are sent)
-  }
-
-
-    // Section to regenrate and send new Cookie Header (csrfp_token) to client
-    const char *regenToken = NULL;
-    regenToken = apr_table_get(r->subprocess_env, "regenToken");
-
-    if (regenToken && !strcasecmp(regenToken, REGEN_TOKEN)) {
+    
+    char *regenToken = apr_table_get(r->subprocess_env, "regen_csrfptoken");
+    if (regenToken && !strcasecmp(regenToken, CSRFP_REGEN_TOKEN)) {
         /*
          * - Regenrate token
          * - Send it as output header
          */
-
-
-        // To ensure Cookie is not regenrated again for this request
-        apr_table_set(r->subprocess_env, "regenToken", "false");
+        setTokenCookie(r);
     }
     return ap_pass_brigade(f->next, bb);
 }
