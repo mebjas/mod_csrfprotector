@@ -31,7 +31,7 @@ errorCustomMessage "Access forbidden by OWASP CSRFProtector"
 jsFilePath http://localhost/
 tokenLength 20
 disablesJsMessage ""
-verifyGetFor (.*):\/\/(.*)\/(.*)
+verifyGetFor .*:\/\/.*\/.*
 ```
 
 then reload `apache2` using `sudo service apache2 restart` in terminal
