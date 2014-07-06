@@ -70,10 +70,15 @@
 //=============================================================
 // Definations of all data structures to be used later
 //=============================================================
+typedef enum
+{
+    true,
+    false
+} BoolFlag;
 
 typedef struct 
 {
-    int flag;                       // Flag to check if CSRFP is disabled...
+    BoolFlag flag;                  // Flag to check if CSRFP is disabled...
                                     // ... 1 by default
     int action;                     // Action Codes, Default - 0
     char *errorRedirectionUri;      // Uri to redirect in case action == 2
@@ -609,7 +614,7 @@ static int csrfp_header_parser(request_rec *r)
 {
     csrfp_config *conf = ap_get_module_config(r->server->module_config,
                                                 &csrf_protector_module);
-    if (!conf->flag) 
+    if (conf->flag == false) 
         return OK;
 
     if (!needvalidation(r)) {
@@ -887,7 +892,7 @@ static void *csrfp_srv_config_create(apr_pool_t *p, server_rec *s)
 {
     // Registering default configurations
     config = apr_pcalloc(p, sizeof(csrfp_config));
-    config->flag = 1;
+    config->flag = true;
     config->action = DEFAULT_ACTION;
     config->tokenLength = DEFAULT_TOKEN_LENGTH;
 
@@ -924,8 +929,8 @@ static void *csrfp_srv_config_create(apr_pool_t *p, server_rec *s)
 /** csrfEnable **/
 const char *csrfp_enable_cmd(cmd_parms *cmd, void *cfg, const char *arg)
 {
-    if(!strcasecmp(arg, "off")) config->flag = 0;
-    else config->flag = 1;
+    if(!strcasecmp(arg, "off")) config->flag = false;
+    else config->flag = true;
     return NULL;
 }
 
