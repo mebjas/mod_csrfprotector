@@ -50,14 +50,6 @@
 " enabled in your web browser otherwise this site will fail to work correctly for you. " \
 " See details of your web browser for how to enable JavaScript."
 
-
-/** definations for error codes **/
-#define CSRFP_ACTION_FORBIDDEN 0
-#define CSRFP_ACTION_STRIP 1
-#define CSRFP_ACTION_REDIRECT 2
-#define CSRFP_ACTION_MESSAGE 3
-#define CSRFP_ACTION_INTERNAL_SERVER_ERROR 4
-
 /** States for csrfp_op_filter object **/
 #define CSRFP_OP_INIT 0
 #define CSRFP_OP_BODY_INIT 1
@@ -74,15 +66,25 @@ typedef enum
 {
     true,
     false
-} BoolFlag;
+} BoolFlag;                         // Flag enum for stating weather to use...
+                                    // ... mod or not
+
+typedef enum
+{
+    forbidden,
+    strip,
+    redirect,
+    message,
+    internal_server_error
+} CsrfpActions;                    // Action enum listing all actions
 
 typedef struct 
 {
     BoolFlag flag;                  // Flag to check if CSRFP is disabled...
                                     // ... 1 by default
-    int action;                     // Action Codes, Default - 0
-    char *errorRedirectionUri;      // Uri to redirect in case action == 2
-    char *errorCustomMessage;       // Message to show in case action == 3
+    CsrfpActions action;            // Action Codes, Default - forbidden
+    char *errorRedirectionUri;      // Uri to redirect in case action == redirect
+    char *errorCustomMessage;       // Message to show in case action == message
     char *jsFilePath;               // Absolute path for JS file
     int tokenLength;                // Length of CSRFP_TOKEN, Default 20
     char *disablesJsMessage;        // Message to be shown in <noscript>
@@ -529,10 +531,10 @@ static int failedValidationAction(request_rec *r)
                                                 &csrf_protector_module);
     switch (conf->action)
     {
-        case CSRFP_ACTION_FORBIDDEN:
+        case forbidden:
             return HTTP_FORBIDDEN;
             break;
-        case CSRFP_ACTION_STRIP:
+        case strip:
             // Strip POST values - and forward the request
             if (!strcmp(r->method, "GET")
                 && r->args) {
@@ -542,7 +544,7 @@ static int failedValidationAction(request_rec *r)
             }
             return OK;
             break;
-        case CSRFP_ACTION_REDIRECT:
+        case redirect:
             // Redirect to custom uri
             if (strlen(conf->errorRedirectionUri) > 0) {
                 apr_table_add(r->headers_out, "Location", conf->errorRedirectionUri);
@@ -551,12 +553,12 @@ static int failedValidationAction(request_rec *r)
                 return HTTP_FORBIDDEN;
             }
             break;
-        case CSRFP_ACTION_MESSAGE:
+        case message:
             // Show custom Error Message
             ap_rprintf(r, "<h2>%s</h2>", conf->errorCustomMessage);
             return DONE;
             break;
-        case CSRFP_ACTION_INTERNAL_SERVER_ERROR:
+        case internal_server_error:
             // Show internel Server error
             return HTTP_INTERNAL_SERVER_ERROR;
             break;
@@ -893,7 +895,7 @@ static void *csrfp_srv_config_create(apr_pool_t *p, server_rec *s)
     // Registering default configurations
     config = apr_pcalloc(p, sizeof(csrfp_config));
     config->flag = true;
-    config->action = DEFAULT_ACTION;
+    config->action = forbidden;
     config->tokenLength = DEFAULT_TOKEN_LENGTH;
 
     // Allocates memory, and assign defalut value For jsFilePath
@@ -938,16 +940,16 @@ const char *csrfp_enable_cmd(cmd_parms *cmd, void *cfg, const char *arg)
 const char *csrfp_action_cmd(cmd_parms *cmd, void *cfg, const char *arg)
 {
     if(!strcasecmp(arg, "forbidden"))
-        config->action = CSRFP_ACTION_FORBIDDEN;
+        config->action = forbidden;
     else if (!strcasecmp(arg, "strip"))
-        config->action = CSRFP_ACTION_STRIP;
+        config->action = strip;
     else if (!strcasecmp(arg, "redirect"))
-        config->action = CSRFP_ACTION_REDIRECT;
+        config->action = redirect;
     else if (!strcasecmp(arg, "message"))
-        config->action = CSRFP_ACTION_MESSAGE;
+        config->action = message;
     else if (!strcasecmp(arg, "internal_server_error"))
-        config->action = CSRFP_ACTION_INTERNAL_SERVER_ERROR;
-    else config->action = CSRFP_ACTION_FORBIDDEN;       //default
+        config->action = internal_server_error;
+    else config->action = forbidden;       //default
 
     return NULL;
 }
@@ -1033,10 +1035,10 @@ static const command_rec csrfp_directives[] =
                 "Defines Action to be taken in case of failed validation"),
     AP_INIT_TAKE1("errorRedirectionUri", csrfp_errorRedirectionUri_cmd, NULL,
                 RSRC_CONF,
-                "Defines URL to redirect if action = 2"),
+                "Defines URL to redirect if action = redirect"),
     AP_INIT_TAKE1("errorCustomMessage", csrfp_errorCustomMessage_cmd, NULL,
                 RSRC_CONF,
-                "Defines Custom Error Message if action = 3"),
+                "Defines Custom Error Message if action = message"),
     AP_INIT_TAKE1("jsFilePath", csrfp_jsFilePath_cmd, NULL,
                 RSRC_CONF,
                 "Absolute url of the js file"),
