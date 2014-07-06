@@ -2,7 +2,7 @@ How to use this dynamic library
 =====================
 
 <h4> Ubuntu (linux) </h4>
-Download `mod_csrfprotector.so` and move it to `/usr/libs/apache2/modules`<br>
+Download `mod_csrfprotector.so` and move it to `/usr/lib/apache2/modules`<br>
 `Note: You'll need root access to do so`
 
 --------------------------------------------
@@ -22,11 +22,11 @@ For addition configurations you might want like to add config like
 #Configuration for CSRFProtector
 csrfpEnable on
 csrfpAction forbidden
-errorRedirectionUri "-"
+errorRedirectionUri ""
 errorCustomMessage "Access forbidden by OWASP CSRFProtector"
 jsFilePath "https://raw.githubusercontent.com/mebjas/mod_csrfprotector/master/js/csrfprotector.js"
 tokenLength 20
-disablesJsMessage "-"
+disablesJsMessage ""
 verifyGetFor .*:\/\/.*\/.*
 ```
 
