@@ -28,10 +28,10 @@ csrfpEnable on
 csrfpAction forbidden
 errorRedirectionUri ""
 errorCustomMessage "Access forbidden by OWASP CSRFProtector"
-jsFilePath http://localhost/
+jsFilePath "https://raw.githubusercontent.com/mebjas/mod_csrfprotector/master/js/csrfprotector.js"
 tokenLength 20
 disablesJsMessage ""
 verifyGetFor .*:\/\/.*\/.*
 ```
 
-then reload `apache2` using `sudo service apache2 restart` in terminal
+then reload `apache2` using `sudo service apache2 restart` in a terminal window
