@@ -77,12 +77,18 @@ typedef enum
     op_body_init,                   // States <body was found, <noscript inserted
     op_body_end,                    // States </body> found, <script inserted
     op_end                          // States output fiter task has finished
-} Filter_State; 
+} Filter_State;                     // enum of output filter states
+
+typedef enum
+{
+    false,                          // States Cookie Length not modified
+    true                            // States Cookie Length modified
+} Filter_Cookie_Length_State;       // list of cookie length states
 
 typedef struct 
 {
-    Flag flag;                  // Flag to check if CSRFP is disabled...
-                                    // ... 1 by default
+    Flag flag;                      // Flag to check if CSRFP is disabled...
+                                    // ... true by default
     csrfp_actions action;            // Action Codes, Default - forbidden
     char *errorRedirectionUri;      // Uri to redirect in case action == redirect
     char *errorCustomMessage;       // Message to show in case action == message
@@ -97,16 +103,16 @@ typedef struct
 
 typedef struct
 {
-    char *search;                   // Stores the item being serched (regex) 
-    Filter_State state;                      // Stores the current state of filter
-    char *script;                   // Will store the js code to be inserted
-    char *noscript;                 // Will store the <noscript>..</noscript>...
-                                    // ...Info to be inserted
-    int clstate;                    // State of Content-Length header 0 - for not ...
-                                    // ...modified, 1 for modified or need not modify
-    char *overlap_buf;              // Buffer to store content of current bb->b buffer ...
-                                    // ... for next iteration in op filter [el]
-} csrfp_opf_ctx;                    // CSRFP output filter context
+    char *search;                       // Stores the item being serched (regex) 
+    Filter_State state;                 // Stores the current state of filter
+    char *script;                       // Will store the js code to be inserted
+    char *noscript;                     // Will store the <noscript>..</noscript>...
+                                        // ...Info to be inserted
+    Filter_Cookie_Length_State clstate; // State of Content-Length header false - for not ...
+                                        // ...modified, true for modified or need not modify
+    char *overlap_buf;                  // Buffer to store content of current bb->b buffer ...
+                                        // ... for next iteration in op filter [el]
+} csrfp_opf_ctx;                        // CSRFP output filter context
 
 static csrfp_config *config;
 
@@ -468,7 +474,7 @@ static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r) {
                                " src=\"%s\"></script>\n",
                                 conf->jsFilePath);
 
-    rctx->clstate = 0;
+    rctx->clstate = false;
     rctx->overlap_buf = apr_pcalloc(r->pool, CSRFP_OVERLAP_BUCKET_SIZE);
     apr_cpystrn(rctx->overlap_buf,
         CSRFP_OVERLAP_BUCKET_DEFAULT, CSRFP_OVERLAP_BUCKET_SIZE);
@@ -707,7 +713,7 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                 apr_table_unset(r->headers_out, "Content-Length");
                 apr_table_unset(r->err_headers_out, "Content-Length");
                 r->chunked = 1;
-                rctx->clstate = 1;  // Content-Length need not be modified anymore
+                rctx->clstate = true;  // Content-Length need not be modified anymore
             } else {
                 // Modify the content-length header -- if available
                 /**
@@ -744,7 +750,7 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                         }
                     }
 
-                    rctx->clstate = 1;  // Content-Length need not be modified anymore
+                    rctx->clstate = true;  // Content-Length need not be modified anymore
                 } else {
                     // This means Content-Length header has not yet been generated
                     // #todo need to do something about this
