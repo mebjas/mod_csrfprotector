@@ -39,7 +39,6 @@
 #define CSRFP_ERROR_MESSAGE_MAXLENGTH 200
 #define CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH 400
 
-#define DEFAULT_ACTION 0
 #define DEFAULT_TOKEN_LENGTH 15
 #define DEFAULT_ERROR_MESSAGE "<h2>ACCESS FORBIDDEN BY OWASP CSRF_PROTECTOR!</h2>"
 #define DEFAULT_REDIRECT_URL ""
@@ -61,7 +60,8 @@ typedef enum
     true,
     false
 } Flag;                         // Flag enum for stating weather to use...
-                                    // ... mod or not
+                                // ... mod or not
+
 typedef enum
 {
     forbidden,
@@ -81,8 +81,8 @@ typedef enum
 
 typedef enum
 {
-    false,                          // States Cookie Length not modified
-    true                            // States Cookie Length modified
+    nmodified,                      // States Cookie Length not modified
+    modified                        // States Cookie Length modified
 } Filter_Cookie_Length_State;       // list of cookie length states
 
 typedef struct 
@@ -474,7 +474,7 @@ static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r) {
                                " src=\"%s\"></script>\n",
                                 conf->jsFilePath);
 
-    rctx->clstate = false;
+    rctx->clstate = nmodified;
     rctx->overlap_buf = apr_pcalloc(r->pool, CSRFP_OVERLAP_BUCKET_SIZE);
     apr_cpystrn(rctx->overlap_buf,
         CSRFP_OVERLAP_BUCKET_DEFAULT, CSRFP_OVERLAP_BUCKET_SIZE);
@@ -536,6 +536,14 @@ static int failedValidationAction(request_rec *r)
 {
     csrfp_config *conf = ap_get_module_config(r->server->module_config,
                                                 &csrf_protector_module);
+    
+    // Log the failure
+    ap_log_rerror(APLOG_MARK, APLOG_NOERRNO|APLOG_ERR, 0, r,
+                      "CSRF ATTACK, %s, action=%d, method=%s", 
+                      conf->action == strip ? "strip & served" : "denied",
+                      conf->action,
+                      (!strcmp(r->method, "GET"))? "GET" : "POST");
+
     switch (conf->action)
     {
         case forbidden:
@@ -713,7 +721,7 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                 apr_table_unset(r->headers_out, "Content-Length");
                 apr_table_unset(r->err_headers_out, "Content-Length");
                 r->chunked = 1;
-                rctx->clstate = true;  // Content-Length need not be modified anymore
+                rctx->clstate = modified;  // Content-Length need not be modified anymore
             } else {
                 // Modify the content-length header -- if available
                 /**
@@ -750,7 +758,7 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                         }
                     }
 
-                    rctx->clstate = true;  // Content-Length need not be modified anymore
+                    rctx->clstate = modified;  // Content-Length need not be modified anymore
                 } else {
                     // This means Content-Length header has not yet been generated
                     // #todo need to do something about this
