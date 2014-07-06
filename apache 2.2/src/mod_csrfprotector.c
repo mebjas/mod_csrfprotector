@@ -107,7 +107,7 @@ static csrfp_config *config;
 //=============================================================
 module AP_MODULE_DECLARE_DATA csrf_protector_module;
 
-//Definations for functions
+// Declarations for functions
 static char *generateToken(request_rec *r, int length);
 static apr_table_t *read_post(request_rec *r);
 static const char *csrfp_strncasestr(const char *s1, const char *s2, int len);
@@ -354,7 +354,7 @@ static char* getCookieToken(request_rec *r)
     tok = apr_pcalloc(r->pool, sizeof(char)*len);
 
     //retrieve the token from cookie string
-    strncpy(tok, &p[strlen(CSRFP_TOKEN) + 1], len);
+    apr_cpystrn(tok, &p[strlen(CSRFP_TOKEN) + 1], len);
 
     return tok;
 }
@@ -462,7 +462,7 @@ static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r) {
 
     rctx->clstate = 0;
     rctx->overlap_buf = apr_pcalloc(r->pool, CSRFP_OVERLAP_BUCKET_SIZE);
-    strncpy(rctx->overlap_buf,
+    apr_cpystrn(rctx->overlap_buf,
         CSRFP_OVERLAP_BUCKET_DEFAULT, CSRFP_OVERLAP_BUCKET_SIZE);
 
     // globalise this configuration
@@ -531,7 +531,7 @@ static int failedValidationAction(request_rec *r)
             // Strip POST values - and forward the request
             if (!strcmp(r->method, "GET")
                 && r->args) {
-                strncpy(r->args, "\0", 1);
+                apr_cpystrn(r->args, "\0", 1);
             } else if (!strcmp(r->method, "POST")) {
                 // #todo: code to perform this
             }
@@ -893,22 +893,22 @@ static void *csrfp_srv_config_create(apr_pool_t *p, server_rec *s)
 
     // Allocates memory, and assign defalut value For jsFilePath
     config->jsFilePath = apr_pcalloc(p, CSRFP_URI_MAXLENGTH);
-    strncpy(config->jsFilePath, DEFAULT_JS_FILE_PATH,
+    apr_cpystrn(config->jsFilePath, DEFAULT_JS_FILE_PATH,
             CSRFP_URI_MAXLENGTH);
 
     // Allocates memory, and assign defalut value For errorRedirectionUri
     config->errorRedirectionUri = apr_pcalloc(p, CSRFP_URI_MAXLENGTH);
-    strncpy(config->errorRedirectionUri, DEFAULT_REDIRECT_URL,
+    apr_cpystrn(config->errorRedirectionUri, DEFAULT_REDIRECT_URL,
             CSRFP_URI_MAXLENGTH);
 
     // Allocates memory, and assign defalut value For errorCustomMessage
     config->errorCustomMessage = apr_pcalloc(p, CSRFP_ERROR_MESSAGE_MAXLENGTH);
-    strncpy(config->errorCustomMessage, DEFAULT_ERROR_MESSAGE,
+    apr_cpystrn(config->errorCustomMessage, DEFAULT_ERROR_MESSAGE,
             CSRFP_ERROR_MESSAGE_MAXLENGTH);
 
     // Allocates memory, and assign defalut value For disablesJsMessage
     config->disablesJsMessage = apr_pcalloc(p, CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH);
-    strncpy(config->disablesJsMessage, DEFAULT_DISABLED_JS_MESSSAGE,
+    apr_cpystrn(config->disablesJsMessage, DEFAULT_DISABLED_JS_MESSSAGE,
             CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH);
 
     // Allocate memory and set regex for ignore-pattern regex object
@@ -951,7 +951,7 @@ const char *csrfp_action_cmd(cmd_parms *cmd, void *cfg, const char *arg)
 const char *csrfp_errorRedirectionUri_cmd(cmd_parms *cmd, void *cfg, const char *arg)
 {
     if(strlen(arg) > 0) {
-        strncpy(config->errorRedirectionUri, arg,
+        apr_cpystrn(config->errorRedirectionUri, arg,
         CSRFP_URI_MAXLENGTH);
     }
     else config->errorRedirectionUri = NULL;
@@ -963,7 +963,7 @@ const char *csrfp_errorRedirectionUri_cmd(cmd_parms *cmd, void *cfg, const char 
 const char *csrfp_errorCustomMessage_cmd(cmd_parms *cmd, void *cfg, const char *arg)
 {
     if(strlen(arg) > 0) {
-        strncpy(config->errorCustomMessage, arg,
+        apr_cpystrn(config->errorCustomMessage, arg,
         CSRFP_ERROR_MESSAGE_MAXLENGTH);
     }
     else config->errorCustomMessage = NULL;
@@ -975,7 +975,7 @@ const char *csrfp_errorCustomMessage_cmd(cmd_parms *cmd, void *cfg, const char *
 const char *csrfp_jsFilePath_cmd(cmd_parms *cmd, void *cfg, const char *arg)
 {
     if(strlen(arg) > 0) {
-        strncpy(config->jsFilePath, arg,
+        apr_cpystrn(config->jsFilePath, arg,
             CSRFP_URI_MAXLENGTH);
     }
     //no else as default config shall come to effect
@@ -999,7 +999,7 @@ const char *csrfp_tokenLength_cmd(cmd_parms *cmd, void *cfg, const char *arg)
 const char *csrfp_disablesJsMessage_cmd(cmd_parms *cmd, void *cfg, const char *arg)
 {
     if(strlen(arg) > 0) {
-        strncpy(config->disablesJsMessage, arg,
+        apr_cpystrn(config->disablesJsMessage, arg,
             CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH);
     }
     //no else as default config shall come to effect
