@@ -50,12 +50,6 @@
 " enabled in your web browser otherwise this site will fail to work correctly for you. " \
 " See details of your web browser for how to enable JavaScript."
 
-/** States for csrfp_op_filter object **/
-#define CSRFP_OP_INIT 0
-#define CSRFP_OP_BODY_INIT 1
-#define CSRFP_OP_BODY_END 2
-#define CSRFP_OP_END 3
-
 #define CSRFP_IGNORE_PATTERN ".*(jpg)|(jpeg)|(gif)|(png)|(js)|(css)|(xml)$"
 #define CSRFP_IGNORE_TEXT "csrfp_ignore_set"
 
@@ -66,9 +60,8 @@ typedef enum
 {
     true,
     false
-} BoolFlag;                         // Flag enum for stating weather to use...
+} Flag;                         // Flag enum for stating weather to use...
                                     // ... mod or not
-
 typedef enum
 {
     forbidden,
@@ -76,13 +69,21 @@ typedef enum
     redirect,
     message,
     internal_server_error
-} CsrfpActions;                    // Action enum listing all actions
+} csrfp_actions;                    // Action enum listing all actions
+
+typedef enum
+{
+    op_init,                        // States output filter has initiated
+    op_body_init,                   // States <body was found, <noscript inserted
+    op_body_end,                    // States </body> found, <script inserted
+    op_end                          // States output fiter task has finished
+} Filter_State; 
 
 typedef struct 
 {
-    BoolFlag flag;                  // Flag to check if CSRFP is disabled...
+    Flag flag;                  // Flag to check if CSRFP is disabled...
                                     // ... 1 by default
-    CsrfpActions action;            // Action Codes, Default - forbidden
+    csrfp_actions action;            // Action Codes, Default - forbidden
     char *errorRedirectionUri;      // Uri to redirect in case action == redirect
     char *errorCustomMessage;       // Message to show in case action == message
     char *jsFilePath;               // Absolute path for JS file
@@ -97,7 +98,7 @@ typedef struct
 typedef struct
 {
     char *search;                   // Stores the item being serched (regex) 
-    int state;                      // Stores the current state of filter
+    Filter_State state;                      // Stores the current state of filter
     char *script;                   // Will store the js code to be inserted
     char *noscript;                 // Will store the <noscript>..</noscript>...
                                     // ...Info to be inserted
@@ -455,7 +456,7 @@ static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r) {
                                                 &csrf_protector_module);
 
     rctx = apr_pcalloc(r->pool, sizeof(csrfp_opf_ctx));
-    rctx->state = CSRFP_OP_INIT;
+    rctx->state = op_init;
     rctx->search = apr_psprintf(r->pool, "<body");
 
     // Allocate memory and init <noscript> content to be injected
@@ -506,11 +507,11 @@ static apr_bucket *csrfp_inject(request_rec *r, apr_bucket_brigade *bb, apr_buck
 
     if (flag) {
         // script has been injected
-        rctx->state = CSRFP_OP_BODY_END;
+        rctx->state = op_body_end;
         rctx->search = NULL;
     } else {
         // <noscript> has been injected
-        rctx->state = CSRFP_OP_BODY_INIT;
+        rctx->state = op_body_init;
         apr_cpystrn(rctx->search, "</body>", strlen("</body>"));
     }
 
@@ -689,12 +690,12 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
      * - set csrfp_token cookie
      * - end (all done)
      */
-    if(rctx->state == CSRFP_OP_INIT) {
+    if(rctx->state == op_init) {
         const char *type = getOutputContentType(r);
         if(type == NULL || ( strncasecmp(type, "text/html", 9) != 0
             && strncasecmp(type, "text/xhtml", 10) != 0) ) {
             // we don't want to parse this response (no html)
-            rctx->state = CSRFP_OP_END;
+            rctx->state = op_end;
             rctx->search = NULL;
             ap_remove_output_filter(f);
         } else {
@@ -789,7 +790,7 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                         //apr_table_addn(r->headers_out, "xyz", marker);
                         if (marker || findBracketOnly) {
                             // ..search was found
-                            if (rctx->state == CSRFP_OP_INIT
+                            if (rctx->state == op_init
                                 || findBracketOnly) {
 
                                 // Seach for '<body' now searching for first '>'
@@ -828,7 +829,7 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                                 }
                                 
                                 goto restart;
-                            } else if (rctx->state == CSRFP_OP_BODY_INIT) {
+                            } else if (rctx->state == op_body_init) {
                                 apr_size_t sz = strlen(buf) - strlen(marker) + sizeof("</body>") - 1;
                                 b = csrfp_inject(r, bb, b, rctx, buf, sz, 1);
                             }
