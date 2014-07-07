@@ -40,6 +40,7 @@
 #define CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH 400
 
 #define DEFAULT_TOKEN_LENGTH 15
+#define DEFAULT_TOKEN_MINIMUM_LENGTH 12
 #define DEFAULT_ERROR_MESSAGE "<h2>ACCESS FORBIDDEN BY OWASP CSRF_PROTECTOR!</h2>"
 #define DEFAULT_REDIRECT_URL ""
 #define DEFAULT_JS_FILE_PATH "http://localhost/csrfp_js/csrfprotector.js"
@@ -1010,7 +1011,10 @@ const char *csrfp_tokenLength_cmd(cmd_parms *cmd, void *cfg, const char *arg)
 {
     if(strlen(arg) > 0) {
         int length = atoi(arg);
-        if (length) config->tokenLength = length;
+        if (length < DEFAULT_TOKEN_MINIMUM_LENGTH
+            || !length)
+            return NULL;
+        config->tokenLength = length;
     }
     //no else as default config shall come to effect
 
