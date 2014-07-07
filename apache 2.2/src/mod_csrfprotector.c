@@ -4,9 +4,21 @@
  */
 
 /** standard c libs **/
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
+#include "stdio.h"
+#include "stdlib.h"
+#include "time.h"
+
+/** OpenSSL **/
+#include <openssl/ssl.h>
+#include <openssl/crypto.h>
+#include <openssl/dh.h>
+#include <openssl/bn.h>
+#include <openssl/rand.h>
+#include <openssl/evp.h>
+#include <openssl/hmac.h>
+#include <openssl/err.h>
+#include <openssl/err.h>
+#include <openssl/sha.h>
 
 /** apache **/
 #include "ap_config.h"
@@ -620,7 +632,6 @@ static int needvalidation(request_rec *r)
 //=====================================================================
 // Handlers -- call back functions for different hooks
 //=====================================================================
-
 /**
  * Callback function for header parser by Hook Registering function
  *
@@ -870,19 +881,6 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
     return ap_pass_brigade(f->next, bb);
 }
 
-/*
-static apr_status_t csrfp_op_content_length_filter(ap_filter_t *f, apr_bucket_brigade *bb)
-{
-    request_rec *r = f->r;
-    apr_table_addn(r->headers_out, "output_filter", "+1");   //tmp
-    const char* cl =  apr_table_get(r->headers_out, "Server");
-    if (cl) {
-        apr_table_addn(r->headers_out, "output_filter", "+2"); 
-    }
-    return ap_pass_brigade(f->next, bb);
-}
-*/
-
 /**
  * Registers op filter -- csrfp_out_filter
  *
@@ -893,11 +891,6 @@ static apr_status_t csrfp_op_content_length_filter(ap_filter_t *f, apr_bucket_br
 static void csrfp_insert_filter(request_rec *r)
 {
     ap_add_output_filter("csrfp_out_filter", NULL, r, r->connection);
-}
-
-static void csrfp_insert_op_filter(request_rec *r)
-{
-    ap_add_output_filter("csrfp_op_content_length_filter", NULL, r, r->connection);
 }
 
 /**
@@ -1091,9 +1084,6 @@ static void csrfp_register_hooks(apr_pool_t *pool)
 
     // Handler to modify output filter
     ap_register_output_filter("csrfp_out_filter", csrfp_out_filter, NULL, AP_FTYPE_RESOURCE);
-    //ap_register_output_filter("csrfp_op_content_length_filter", 
-    //                        csrfp_op_content_length_filter,
-    //                        NULL, AP_FTYPE_RESOURCE);
 
     ap_hook_insert_filter(csrfp_insert_filter, NULL, NULL, APR_HOOK_MIDDLE);
 }
