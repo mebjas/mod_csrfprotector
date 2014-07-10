@@ -47,9 +47,10 @@
 #define CSRFP_OVERLAP_BUCKET_SIZE 8
 #define CSRFP_OVERLAP_BUCKET_DEFAULT "--------"
 
-#define CSRFP_URI_MAXLENGTH 200
-#define CSRFP_ERROR_MESSAGE_MAXLENGTH 200
-#define CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH 400
+#define CSRFP_URI_MAXLENGTH 512
+#define CSRFP_ERROR_MESSAGE_MAXLENGTH 1024
+#define CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH 512
+#define CSRFP_VERIFYGETFOR_MAXLENGTH 512
 
 #define DEFAULT_TOKEN_LENGTH 15
 #define DEFAULT_TOKEN_MINIMUM_LENGTH 12
@@ -108,7 +109,7 @@ typedef struct
     char *jsFilePath;               // Absolute path for JS file
     int tokenLength;                // Length of CSRFP_TOKEN, Default 20
     char *disablesJsMessage;        // Message to be shown in <noscript>
-    ap_regex_t *verifyGetFor;       // Path pattern for which GET requests...
+    char *verifyGetFor;       // Path pattern for which GET requests...
                                     // ...Need to be validated as well
     ap_regex_t *ignore_pattern;     // Path pattern for which validation...
                                     // ...is Not needed
@@ -483,9 +484,18 @@ static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r) {
                                 conf->disablesJsMessage);
 
     // Allocate memory and init <script> content to be injected
+
     rctx->script = apr_psprintf(r->pool, "\n<script type=\"text/javascript\""
-                               " src=\"%s\"></script>\n",
-                                conf->jsFilePath);
+                               " src=\"%s\"></script>\n"
+                               "<script type=\"text/JavaScript\">\n"
+                               "window.onload = function() {\n"
+                               "\t  CSRFP.checkForUrls = [%s];\n"
+                               "\t  CSRFP.CSRFP_TOKEN = '%s';\n"
+                               "\t  csrfprotector_init();\n"
+                               "}\n</script>\n",
+                                conf->jsFilePath,
+                                (strcmp(conf->verifyGetFor, ""))?conf->verifyGetFor : "",
+                                CSRFP_TOKEN);
 
     rctx->clstate = nmodified;
     rctx->overlap_buf = apr_pcalloc(r->pool, CSRFP_OVERLAP_BUCKET_SIZE);
@@ -930,6 +940,9 @@ static void *csrfp_srv_config_create(apr_pool_t *p, server_rec *s)
     // Allocate memory and set regex for ignore-pattern regex object
     config->ignore_pattern = ap_pregcomp(p, CSRFP_IGNORE_PATTERN, AP_REG_ICASE);
 
+    config->verifyGetFor = apr_pcalloc(p,CSRFP_VERIFYGETFOR_MAXLENGTH);
+    apr_cpystrn(config->verifyGetFor, "", CSRFP_VERIFYGETFOR_MAXLENGTH);
+
     return config;
 }
 
@@ -1029,8 +1042,10 @@ const char *csrfp_disablesJsMessage_cmd(cmd_parms *cmd, void *cfg, const char *a
 /** verifyGetFor **/
 const char *csrfp_verifyGetFor_cmd(cmd_parms *cmd, void *cfg, const char *arg)
 {
-    //#todo: finish this function
-    config->verifyGetFor = NULL;        //temp
+    if(strlen(arg) > 0) {
+        apr_cpystrn(config->verifyGetFor, arg,
+            CSRFP_VERIFYGETFOR_MAXLENGTH);
+    }
 
     return NULL;
 }
@@ -1038,7 +1053,6 @@ const char *csrfp_verifyGetFor_cmd(cmd_parms *cmd, void *cfg, const char *arg)
 /** Directives from httpd.conf or .htaccess **/
 static const command_rec csrfp_directives[] =
 {
-    //#todo: verifyGetFor shall have multiple entries, need to check
     AP_INIT_TAKE1("csrfpEnable", csrfp_enable_cmd, NULL,
                 RSRC_CONF|ACCESS_CONF,
                 "csrfpEnable 'on'|'off', enables the module. Default is 'on'"),
