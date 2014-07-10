@@ -130,6 +130,13 @@ typedef struct
 
 static csrfp_config *config;
 
+typedef struct csrfp_get_rules          // Linked list of get rules
+{
+    ap_regex_t *pattern;                // regex for GET requests to be validated
+    struct csrfp_get_rules *next;       // Pointer to next element in linked list
+};
+
+struct csrfp_get_rules *get_rules_top = NULL;
 //=============================================================
 // Globals
 //=============================================================
@@ -267,6 +274,21 @@ static apr_table_t *read_post(request_rec *r)
     }
 
     return tbl;
+}
+
+/**
+ * Function to retrun current url
+ *
+ * @param r, request_rec object
+ *
+ * @return current url (char *)
+ * @todo: set to http/https depending upon request r
+ */
+static char* getCurrentUrl(request_rec *r)
+{
+    char *retval;
+    retval = apr_pstrcat(r->pool, "http://", r->hostname, r->uri, NULL);
+    return retval;
 }
 
 /**
@@ -671,13 +693,20 @@ static int csrfp_header_parser(request_rec *r)
         return failedValidationAction(r);
 
     } else if ( !strcmp(r->method, "GET") ) {
-        //#todo:
-        //1. Check get validation is enabled for a particular request
-        //2. if yes
-        //      validate the request - if fails
-        //          take appropriate action, as per configuration
-        //      else
-        //          refresh cookie in output header
+        const char *currentUrl = getCurrentUrl(r);
+        struct csrfp_get_rules *p = get_rules_top;
+        while (p != NULL) {
+            if (ap_regexec(p->pattern, currentUrl, 0, NULL, 0) == 0)
+                break;
+            p = p->next;
+        }
+
+        if (p != NULL && !validateGETTtoken(r)) {
+            // Means pattern matched && validation failed
+            // Log this --
+            // Take actions as per configuration
+            return failedValidationAction(r);
+        }
     }
 
     // Information for output_filter to regenrate token and
@@ -1045,6 +1074,7 @@ const char *csrfp_verifyGetFor_cmd(cmd_parms *cmd, void *cfg, const char *arg)
     if(strlen(arg) > 0) {
         apr_cpystrn(config->verifyGetFor, arg,
             CSRFP_VERIFYGETFOR_MAXLENGTH);
+        //#todo: Parse this data & generate csrfp_get_rule linked list
     }
 
     return NULL;
