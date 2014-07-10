@@ -51,6 +51,7 @@
 #define CSRFP_ERROR_MESSAGE_MAXLENGTH 1024
 #define CSRFP_DISABLED_JS_MESSAGE_MAXLENGTH 512
 #define CSRFP_VERIFYGETFOR_MAXLENGTH 512
+#define CSRFP_GET_RULE_MAX_LENGTH 256
 
 #define DEFAULT_TOKEN_LENGTH 15
 #define DEFAULT_TOKEN_MINIMUM_LENGTH 12
@@ -129,14 +130,6 @@ typedef struct
 } csrfp_opf_ctx;                        // CSRFP output filter context
 
 static csrfp_config *config;
-
-typedef struct csrfp_get_rules          // Linked list of get rules
-{
-    ap_regex_t *pattern;                // regex for GET requests to be validated
-    struct csrfp_get_rules *next;       // Pointer to next element in linked list
-};
-
-struct csrfp_get_rules *get_rules_top = NULL;
 //=============================================================
 // Globals
 //=============================================================
@@ -693,20 +686,51 @@ static int csrfp_header_parser(request_rec *r)
         return failedValidationAction(r);
 
     } else if ( !strcmp(r->method, "GET") ) {
-        const char *currentUrl = getCurrentUrl(r);
-        struct csrfp_get_rules *p = get_rules_top;
-        while (p != NULL) {
-            if (ap_regexec(p->pattern, currentUrl, 0, NULL, 0) == 0)
-                break;
-            p = p->next;
-        }
+        apr_pool_t **pool;
+        apr_pool_create(pool, r->pool);
 
-        if (p != NULL && !validateGETTtoken(r)) {
-            // Means pattern matched && validation failed
-            // Log this --
-            // Take actions as per configuration
-            return failedValidationAction(r);
+        char **arr;
+        int loop = 0;
+
+        char* patterns = apr_pstrdup(*pool, config->verifyGetFor);
+        apr_table_addn(r->headers_out, "test", patterns);
+        apr_strtok(patterns, "','", arr);
+
+        const char *currentUrl = getCurrentUrl(r);
+        
+        while (arr != NULL) {
+            ap_regex_t* pattern;
+            pattern = (ap_regex_t*) apr_pcalloc(*pool, sizeof pattern);
+            
+            if (loop == 0) {
+                // Means first elem -- remove init `'`
+                int len = strlen(*arr), i;
+                for (i = 0; i < len; i++) {
+                    **arr = *(*arr+1);
+                }
+                *arr[len - 1] = '\0';
+                if ((arr + 1) == NULL)
+                    *arr[len - 2] = '\0';  // if only elem                 
+            } else if ((arr + 1) == NULL) {
+                *arr[strlen(*arr) - 1] = '\0';  // Last elem -- remove trailing `'`
+            }
+
+            ap_regcomp(pattern, *arr, 0);
+            if (ap_regexec(pattern, currentUrl, 0, NULL, 0) == 0) {
+                if (!validateGETTtoken(r)) {
+                    // --free the pool its not needed anymore
+                    apr_pool_clear(*pool);
+
+                    // Means pattern matched && validation failed
+                    // Log this --
+                    // Take actions as per configuration
+                    return failedValidationAction(r);
+                }
+                break;
+            }
+            ++arr; ++loop;
         }
+        apr_pool_clear(*pool);
     }
 
     // Information for output_filter to regenrate token and
@@ -1074,7 +1098,6 @@ const char *csrfp_verifyGetFor_cmd(cmd_parms *cmd, void *cfg, const char *arg)
     if(strlen(arg) > 0) {
         apr_cpystrn(config->verifyGetFor, arg,
             CSRFP_VERIFYGETFOR_MAXLENGTH);
-        //#todo: Parse this data & generate csrfp_get_rule linked list
     }
 
     return NULL;
