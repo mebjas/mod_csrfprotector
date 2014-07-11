@@ -110,8 +110,6 @@ typedef struct
     char *jsFilePath;               // Absolute path for JS file
     int tokenLength;                // Length of CSRFP_TOKEN, Default 20
     char *disablesJsMessage;        // Message to be shown in <noscript>
-    char *verifyGetFor;       // Path pattern for which GET requests...
-                                    // ...Need to be validated as well
     ap_regex_t *ignore_pattern;     // Path pattern for which validation...
                                     // ...is Not needed
 } csrfp_config;                      // CSRFP configuraion
@@ -130,6 +128,15 @@ typedef struct
 } csrfp_opf_ctx;                        // CSRFP output filter context
 
 static csrfp_config *config;
+
+typedef struct getRuleNode
+{
+    ap_regex_t *pattern;
+    char *patterString;
+    struct getRuleNode *next;
+};
+
+struct getRuleNode *getTop = NULL, *getPointer = NULL;
 //=============================================================
 // Globals
 //=============================================================
@@ -509,7 +516,7 @@ static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r) {
                                "\t  csrfprotector_init();\n"
                                "}\n</script>\n",
                                 conf->jsFilePath,
-                                (strcmp(conf->verifyGetFor, ""))?conf->verifyGetFor : "",
+                                "",
                                 CSRFP_TOKEN);
 
     rctx->clstate = nmodified;
@@ -686,51 +693,21 @@ static int csrfp_header_parser(request_rec *r)
         return failedValidationAction(r);
 
     } else if ( !strcmp(r->method, "GET") ) {
-        apr_pool_t **pool;
-        apr_pool_create(pool, r->pool);
 
-        char **arr;
-        int loop = 0;
-
-        char* patterns = apr_pstrdup(*pool, config->verifyGetFor);
-        apr_table_addn(r->headers_out, "test", patterns);
-        apr_strtok(patterns, "','", arr);
-
-        const char *currentUrl = getCurrentUrl(r);
-        
-        while (arr != NULL) {
-            ap_regex_t* pattern;
-            pattern = (ap_regex_t*) apr_pcalloc(*pool, sizeof pattern);
-            
-            if (loop == 0) {
-                // Means first elem -- remove init `'`
-                int len = strlen(*arr), i;
-                for (i = 0; i < len; i++) {
-                    **arr = *(*arr+1);
-                }
-                *arr[len - 1] = '\0';
-                if ((arr + 1) == NULL)
-                    *arr[len - 2] = '\0';  // if only elem                 
-            } else if ((arr + 1) == NULL) {
-                *arr[strlen(*arr) - 1] = '\0';  // Last elem -- remove trailing `'`
-            }
-
-            ap_regcomp(pattern, *arr, 0);
-            if (ap_regexec(pattern, currentUrl, 0, NULL, 0) == 0) {
+        struct getRuleNode *p = getTop;
+        while (p != NULL) {
+            const char *currentUrl = getCurrentUrl(r);
+            if (ap_regexec(p->pattern, currentUrl, 0, NULL, 0) == 0) {
                 if (!validateGETTtoken(r)) {
-                    // --free the pool its not needed anymore
-                    apr_pool_clear(*pool);
 
                     // Means pattern matched && validation failed
                     // Log this --
                     // Take actions as per configuration
                     return failedValidationAction(r);
                 }
-                break;
             }
-            ++arr; ++loop;
+            p = p->next;
         }
-        apr_pool_clear(*pool);
     }
 
     // Information for output_filter to regenrate token and
@@ -993,9 +970,6 @@ static void *csrfp_srv_config_create(apr_pool_t *p, server_rec *s)
     // Allocate memory and set regex for ignore-pattern regex object
     config->ignore_pattern = ap_pregcomp(p, CSRFP_IGNORE_PATTERN, AP_REG_ICASE);
 
-    config->verifyGetFor = apr_pcalloc(p,CSRFP_VERIFYGETFOR_MAXLENGTH);
-    apr_cpystrn(config->verifyGetFor, "", CSRFP_VERIFYGETFOR_MAXLENGTH);
-
     return config;
 }
 
@@ -1096,8 +1070,25 @@ const char *csrfp_disablesJsMessage_cmd(cmd_parms *cmd, void *cfg, const char *a
 const char *csrfp_verifyGetFor_cmd(cmd_parms *cmd, void *cfg, const char *arg)
 {
     if(strlen(arg) > 0) {
-        apr_cpystrn(config->verifyGetFor, arg,
+        // Create a Node
+        struct getRuleNode *p;
+        p = apr_pcalloc(cmd->pool, sizeof (struct getRuleNode));
+        p->next = NULL;
+        p->patterString = apr_pcalloc(cmd->pool, CSRFP_VERIFYGETFOR_MAXLENGTH);
+        p->patterString = apr_cpystrn(p->patterString, arg,
             CSRFP_VERIFYGETFOR_MAXLENGTH);
+        p->pattern = apr_pcalloc(cmd->pool, sizeof (p->pattern));
+        ap_regcomp(p->pattern, arg, 0);
+
+        // Add to linked list
+        if (getTop == NULL) {
+            // First element
+            getTop = p;
+            getPointer = p;
+        } else {
+            getPointer->next = p;
+            getPointer = p;
+        }
     }
 
     return NULL;
@@ -1127,7 +1118,7 @@ static const command_rec csrfp_directives[] =
     AP_INIT_TAKE1("disablesJsMessage", csrfp_disablesJsMessage_cmd, NULL,
                 RSRC_CONF,
                 "<noscript> message to be shown to user"),
-    AP_INIT_TAKE1("verifyGetFor", csrfp_verifyGetFor_cmd, NULL,
+    AP_INIT_ITERATE("verifyGetFor", csrfp_verifyGetFor_cmd, NULL,
                 RSRC_CONF|ACCESS_CONF,
                 "Pattern of urls for which GET request CSRF validation is enabled"),
     { NULL }
