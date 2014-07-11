@@ -142,8 +142,6 @@ var CSRFP = {
 	_init: function() {
 		//convert these rules received from php lib to regex objects
 		for (var i = 0; i < CSRFP.checkForUrls.length; i++) {
-			CSRFP.checkForUrls[i] = CSRFP.checkForUrls[i].replace(/\*/g, '(.*)')
-								.replace(/\//g, "\\/");
 			CSRFP.checkForUrls[i] = new RegExp(CSRFP.checkForUrls[i]);
 		}
 	
