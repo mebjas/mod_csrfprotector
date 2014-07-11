@@ -581,6 +581,49 @@ static apr_bucket *csrfp_inject(request_rec *r, apr_bucket_brigade *bb, apr_buck
 }
 
 /**
+ * Function to log an attack
+ *
+ * @param r, request_rec object
+ *
+ * @return void
+ */
+static void logCSRFAttack(request_rec *r)
+{
+    csrfp_config *conf = ap_get_module_config(r->server->module_config,
+                                                &csrf_protector_module);
+
+    int isGet = (!strcmp(r->method, "GET"));
+    const char *POSTArgs;
+    if (isGet == 0) {
+        // Get POST arguments
+        // parse the value from POST query
+        apr_table_t *POST;
+        POST = read_post(r);
+
+        const apr_array_header_t *fields;
+        int i;
+        apr_table_entry_t *e = 0;
+
+        fields = apr_table_elts(POST);
+        e = (apr_table_entry_t *) fields->elts;
+        for(i = 0; i < fields->nelts; i++) {
+            if (POSTArgs == NULL)
+                POSTArgs = apr_pstrcat(r->pool, e[i].key, "->", e[i].val, ",", NULL);
+            else
+                POSTArgs = apr_pstrcat(r->pool, POSTArgs, e[i].key, "->", e[i].val, ",", NULL);
+        }
+    }
+    // Log the failure
+    ap_log_rerror(APLOG_MARK, APLOG_NOERRNO|APLOG_ERR, 0, r,
+                      "CSRF ATTACK, %s, action=%d, method=%s, arguments=%s, url=%s", 
+                      conf->action == strip ? "strip & served" : "denied",
+                      conf->action,
+                      (isGet)? "GET" : "POST",
+                      (isGet)? r->args: POSTArgs,
+                      getCurrentUrl(r));
+}
+
+/**
  * Returns appropriate status code, as per configuration
  * For failed validation action
  *
@@ -593,12 +636,7 @@ static int failedValidationAction(request_rec *r)
     csrfp_config *conf = ap_get_module_config(r->server->module_config,
                                                 &csrf_protector_module);
     
-    // Log the failure
-    ap_log_rerror(APLOG_MARK, APLOG_NOERRNO|APLOG_ERR, 0, r,
-                      "CSRF ATTACK, %s, action=%d, method=%s", 
-                      conf->action == strip ? "strip & served" : "denied",
-                      conf->action,
-                      (!strcmp(r->method, "GET"))? "GET" : "POST");
+    logCSRFAttack(r);   // Log this attack
 
     switch (conf->action)
     {
