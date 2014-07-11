@@ -784,6 +784,7 @@ static int csrfp_header_parser(request_rec *r)
 static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 {
     request_rec *r = f->r;
+
     /**
      * if request  file is image or js, ignore the filter on the top itself
      */
@@ -795,8 +796,6 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 
     // Get the context config
     csrfp_opf_ctx *rctx = csrfp_get_rctx(r);
-    
-    //apr_table_addn(r->headers_out, "output_filter", "Arrival Confirmed");
 
     /*
      * - Determine if it's html and force chunked response
@@ -863,7 +862,6 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                 } else {
                     // This means Content-Length header has not yet been generated
                     // #todo need to do something about this
-
                 }
             }
         }
@@ -872,6 +870,10 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
     // start searching within this brigade...
     if (rctx->search) {
         apr_bucket *b;
+
+        // Create custo pool for Output Filter
+        apr_pool_t *pool;
+        apr_pool_create(&pool, r->pool);
 
         for (b = APR_BRIGADE_FIRST(bb); b != APR_BRIGADE_SENTINEL(bb); b = APR_BUCKET_NEXT(b)) {
             if (APR_BUCKET_IS_EOS(b)) {
@@ -897,7 +899,7 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                 if (apr_bucket_read(b, &buf, &nbytes, APR_BLOCK_READ) == APR_SUCCESS) {
                     if (nbytes > 0) {
                         // Create a new string = overlap_buf + buf
-                        const char *nbuf = apr_pstrcat(r->pool, rctx->overlap_buf,
+                        const char *nbuf = apr_pstrcat(pool, rctx->overlap_buf,
                                                 buf, NULL);
                         const char *marker = NULL;
                         apr_size_t sz;
@@ -957,6 +959,8 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                 }
             }
         }
+
+        apr_pool_destroy(pool);
     }
     
     const char *regenToken = apr_table_get(r->subprocess_env, "regen_csrfptoken");
