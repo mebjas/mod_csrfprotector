@@ -16,12 +16,14 @@ echo "" >> /etc/apache2/mods-enabled/csrf_protector.load
 echo "#Configuration for CSRFProtector" >> /etc/apache2/mods-enabled/csrf_protector.load
 echo "csrfpEnable on" >> /etc/apache2/mods-enabled/csrf_protector.load
 echo "csrfpAction forbidden" >> /etc/apache2/mods-enabled/csrf_protector.load
-#echo "errorRedirectionUri \"-\"" >> /etc/apache2/mods-enabled/csrf_protector.load
+#echo "errorRedirectionUri \"\"" >> /etc/apache2/mods-enabled/csrf_protector.load
 echo "errorCustomMessage \"<h2>Access forbidden by OWASP CSRFProtector</h2>\"" >> /etc/apache2/mods-enabled/csrf_protector.load
 echo "jsFilePath http://localhost/csrfp_js/csrfprotector.js" >> /etc/apache2/mods-enabled/csrf_protector.load
 echo "tokenLength 20" >> /etc/apache2/mods-enabled/csrf_protector.load
-#echo "disablesJsMessage \"-\"" >> /etc/apache2/mods-enabled/csrf_protector.load
-echo "verifyGetFor \"'.*:\/\/.*\/.*'\"" >> /etc/apache2/mods-enabled/csrf_protector.load
+#echo "disablesJsMessage \"\"" >> /etc/apache2/mods-enabled/csrf_protector.load
+echo "verifyGetFor .*:\/\/localhost\/csrfp_test/delete.*" >> /etc/apache2/mods-enabled/csrf_protector.load
+echo "verifyGetFor .*:\/\/localhost\/csrfp_custom/.*" >> /etc/apache2/mods-enabled/csrf_protector.load
+
 
 echo "Configuration write finished"
 echo "---------------------------------------------------"

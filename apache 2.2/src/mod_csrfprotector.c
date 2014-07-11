@@ -132,7 +132,7 @@ static csrfp_config *config;
 typedef struct getRuleNode
 {
     ap_regex_t *pattern;
-    char *patterString;
+    const char *patternString;
     struct getRuleNode *next;
 };
 
@@ -505,8 +505,19 @@ static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r) {
     rctx->noscript = apr_psprintf(r->pool, "\n<noscript>\n%s\n</noscript>",
                                 conf->disablesJsMessage);
 
-    // Allocate memory and init <script> content to be injected
+    // Parse the getRule linked list and generate the rule string to be appended to js
+    struct getRuleNode *p = getTop;
+    char *getRuleString = NULL;
+    while (p != NULL) {
+        if (getRuleString)
+            getRuleString = apr_pstrcat(r->pool, getRuleString, ",'" , p->patternString , "'", NULL);
+        else
+            getRuleString = apr_pstrcat(r->pool, "'" , p->patternString , "'", NULL);
 
+        p = p->next;
+    }
+
+    // Allocate memory and init <script> content to be injected
     rctx->script = apr_psprintf(r->pool, "\n<script type=\"text/javascript\""
                                " src=\"%s\"></script>\n"
                                "<script type=\"text/JavaScript\">\n"
@@ -516,7 +527,7 @@ static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r) {
                                "\t  csrfprotector_init();\n"
                                "}\n</script>\n",
                                 conf->jsFilePath,
-                                "",
+                                (getRuleString == NULL)?"": getRuleString,
                                 CSRFP_TOKEN);
 
     rctx->clstate = nmodified;
@@ -1074,9 +1085,8 @@ const char *csrfp_verifyGetFor_cmd(cmd_parms *cmd, void *cfg, const char *arg)
         struct getRuleNode *p;
         p = apr_pcalloc(cmd->pool, sizeof (struct getRuleNode));
         p->next = NULL;
-        p->patterString = apr_pcalloc(cmd->pool, CSRFP_VERIFYGETFOR_MAXLENGTH);
-        p->patterString = apr_cpystrn(p->patterString, arg,
-            CSRFP_VERIFYGETFOR_MAXLENGTH);
+
+        p->patternString = apr_pstrdup(cmd->pool, arg);
         p->pattern = apr_pcalloc(cmd->pool, sizeof (p->pattern));
         ap_regcomp(p->pattern, arg, 0);
 
