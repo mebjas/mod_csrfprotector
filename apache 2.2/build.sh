@@ -6,7 +6,8 @@ APACHE_VER=2.2.2
 echo "Building for apache version $APACHE_VER"
 echo "BUILD INIT...."
 echo "Initiating MOD_CSRFPROTECTOR BUILD PROCESS"
-sudo apxs2 -cia -n csrf_protector ./src/mod_csrfprotector.c
+sudo apxs2 -cia -n csrf_protector ./src/mod_csrfprotector.c ./src/prng/prng.c -lm
+#include ssl library source here, ./src/sqlite/sqlite3.c
 echo "BUILD FINISHED ...!"
 echo "Restarting APACHE ...!"
 

@@ -3,12 +3,7 @@
  * CSRF vulnerability in web applications
  */
 
-/** standard c libs **/
-#include "stdio.h"
-#include "stdlib.h"
-#include "time.h"
-
-/** OpenSSL **/
+/** openssl **/
 #include <openssl/ssl.h>
 #include <openssl/crypto.h>
 #include <openssl/dh.h>
@@ -17,8 +12,12 @@
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/err.h>
-#include <openssl/err.h>
 #include <openssl/sha.h>
+
+/** standard c libs **/
+#include "stdio.h"
+#include "stdlib.h"
+#include "time.h"
 
 /** apache **/
 #include "ap_config.h"
@@ -38,6 +37,9 @@
 #include "apr_buckets.h"
 #include "apr_lib.h"
 #include "apr_strings.h"
+
+#include "sqlite/sqlite3.h"
+#include "prng/prng.h"
 
 /** definations **/
 #define CSRFP_TOKEN "csrfp_token"
@@ -306,15 +308,12 @@ static char* generateToken(request_rec *r, int length)
     char *token = NULL;
     token = apr_pcalloc(r->pool, sizeof(char) * length);
 
-    time_t t;
-    /* Intializes random number generator */
-    srand((unsigned) time(&t));
-
     if (length) {
         --length;
         int n = 0;
         for ( ; n < length; n++) {
-            int key = rand() % (int) (sizeof charset - 1);
+            unsigned char key = prng_get_octet();
+            key = key % (sizeof (charset) - 1);
             token[n] = charset[key];
         }
         token[length] = '\0';
