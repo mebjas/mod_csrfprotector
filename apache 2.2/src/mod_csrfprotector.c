@@ -3,17 +3,6 @@
  * CSRF vulnerability in web applications
  */
 
-/** openssl **/
-#include <openssl/ssl.h>
-#include <openssl/crypto.h>
-#include <openssl/dh.h>
-#include <openssl/bn.h>
-#include <openssl/rand.h>
-#include <openssl/evp.h>
-#include <openssl/hmac.h>
-#include <openssl/err.h>
-#include <openssl/sha.h>
-
 /** standard c libs **/
 #include "stdio.h"
 #include "stdlib.h"
@@ -38,7 +27,6 @@
 #include "apr_lib.h"
 #include "apr_strings.h"
 
-#include "sqlite/sqlite3.h"
 #include "prng/prng.h"
 
 /** definations **/
