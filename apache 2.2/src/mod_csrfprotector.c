@@ -3,17 +3,6 @@
  * CSRF vulnerability in web applications
  */
 
-/** openssl **/
-#include <openssl/ssl.h>
-#include <openssl/crypto.h>
-#include <openssl/dh.h>
-#include <openssl/bn.h>
-#include <openssl/rand.h>
-#include <openssl/evp.h>
-#include <openssl/hmac.h>
-#include <openssl/err.h>
-#include <openssl/sha.h>
-
 /** standard c libs **/
 #include "stdio.h"
 #include "stdlib.h"
@@ -43,6 +32,7 @@
 
 /** definations **/
 #define CSRFP_TOKEN "csrfp_token"
+#define CSRFP_SESS_TOKEN "CSRFPSESSID"
 #define DEFAULT_POST_ENCTYPE "application/x-www-form-urlencoded"
 #define CSRFP_REGEN_TOKEN "true"
 #define CSRFP_CHUNKED_ONLY 0
@@ -68,6 +58,9 @@
 
 #define CSRFP_IGNORE_PATTERN ".*(jpg)|(jpeg)|(gif)|(png)|(js)|(css)|(xml)$"
 #define CSRFP_IGNORE_TEXT "csrfp_ignore_set"
+
+#define SQL_SESSID_DEFAULT_LENGTH 10
+#define TOKEN_EXPIRY_MAXTIME 1800
 
 //=============================================================
 // Definations of all data structures to be used later
@@ -149,8 +142,14 @@ static char *generateToken(request_rec *r, int length);
 static apr_table_t *read_post(request_rec *r);
 static const char *csrfp_strncasestr(const char *s1, const char *s2, int len);
 static apr_table_t *csrfp_get_query(request_rec *r);
-static char* getCookieToken(request_rec *r);
+static char* getCookieToken(request_rec *r, char *key);
 static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r);
+
+//Declarations for SQLite based functions
+static void csrfp_sql_table_clean(request_rec *r, sqlite3 *db);
+static sqlite3 *csrfp_sql_init(request_rec *r);
+static int csrfp_sql_match(request_rec *r, sqlite3 *db, const char *sessid, const char *value);
+static int csrfp_sql_addn(request_rec *r, sqlite3 *db, const char *sessid, const char *value);
 
 //=============================================================
 // Functions
@@ -355,18 +354,31 @@ static apr_table_t *csrfp_get_query(request_rec *r)
  *
  * @return void
  */
-static void setTokenCookie(request_rec *r)
+static void setTokenCookie(request_rec *r, sqlite3 *db)
 {
     csrfp_config *conf = ap_get_module_config(r->server->module_config,
                                                 &csrf_protector_module);
-    char *token = NULL, *cookie = NULL;
+    char *token = NULL, *cookie = NULL, *sessid = NULL;
 
     // Generate a new token
     token = generateToken(r, conf->tokenLength);
 
-    // Send token as cookie header
+    // Send token as cookie header #todo - set expiry time of this token
     cookie = apr_psprintf(r->pool, "%s=%s; Version=1; Path=/;", CSRFP_TOKEN, token);
     apr_table_setn(r->headers_out, "Set-Cookie", cookie);
+
+    //SESSION PART
+    sessid = getCookieToken(r, CSRFP_SESS_TOKEN);
+    if (sessid == NULL) {
+        sessid = generateToken(r, SQL_SESSID_DEFAULT_LENGTH);
+    }
+
+    // Add / Update it to database
+    // #todo: what if the sessid is same as existing one, do modify code corresponding to that
+    csrfp_sql_addn(r, db, sessid, token);
+
+    cookie = apr_psprintf(r->pool, "%s=%s; Version=1; Path=/; HttpOnly;", CSRFP_SESS_TOKEN, sessid);
+    apr_table_addn(r->headers_out, "Set-Cookie", cookie);
 } 
 
 /**
@@ -376,46 +388,34 @@ static void setTokenCookie(request_rec *r)
  *
  * @return: CSRFP_TOKEN if exist in cookie, else null
  */
-static char* getCookieToken(request_rec *r)
+static char* getCookieToken(request_rec *r, char *key)
 {
-    const char *cookie = NULL;
-    cookie = apr_table_get(r->headers_in, "Cookie");
+    char *value, *buffer, *end;
+    const char *cookie;
 
-    if (!cookie)
-        return NULL;
-
-    char *p = strstr(cookie, CSRFP_TOKEN);
-
-    // if csrfp_token doesnot exist
-    if (!p)
-        return NULL;
-
-    int totalLen = strlen(p), pos = 0, i;
-
-    for (i = 0; i < totalLen; i++) {
-        if (p[i] == ';')
-            break;
-        ++pos;
+    if (cookie = apr_table_get(r->headers_in, "Cookie")) {
+        if (value = ap_strstr_c(cookie, key)) {
+            value += strlen(key) + 1;
+            buffer = apr_pstrdup(r->pool, value);
+            end = strchr(buffer, ';');
+            if (end) {
+                *end = '\0';
+            }
+            return buffer;
+        }
     }
-
-    int len = pos - strlen(CSRFP_TOKEN) - 1;
-    char *tok = NULL;
-    tok = apr_pcalloc(r->pool, sizeof(char)*len);
-
-    //retrieve the token from cookie string
-    apr_cpystrn(tok, &p[strlen(CSRFP_TOKEN) + 1], len);
-
-    return tok;
+    return NULL;
 }
 
 /**
  * Function to validate post token, csrfp_token in POST query parameter
  *
  * @param: r, request_rec pointer
+ * @param: db, sqlite 3 database object
  *
  * @return: int, 0 - for failed validation, 1 - for passed
  */
-static int validatePOSTtoken(request_rec *r)
+static int validatePOSTtoken(request_rec *r, sqlite3 *db)
 {
     const char* tokenValue = NULL;
 
@@ -427,7 +427,12 @@ static int validatePOSTtoken(request_rec *r)
 
     if (!tokenValue) return 0;
     else {
-        if ( !strcmp(tokenValue, getCookieToken(r) )) return 1;
+        char *sessid = getCookieToken(r, CSRFP_SESS_TOKEN);
+        if (sessid == NULL) {
+            return 0;
+        }
+
+        if ( !csrfp_sql_match(r, db, sessid, tokenValue)) return 1;
         //token doesn't match
         return 0;
     }
@@ -455,7 +460,7 @@ static int validateGETTtoken(request_rec *r)
 
     if (!tokenValue) return 0;
     else {
-        if ( !strcmp(tokenValue, getCookieToken(r) )) return 1;
+        if ( !strcmp(tokenValue, getCookieToken(r, CSRFP_TOKEN) )) return 1;
         //token does not match
         return 0;
     }
@@ -709,6 +714,168 @@ static int needvalidation(request_rec *r)
     return 1;
 }
 
+//=============================================================
+// All SQLite related functions -- #todo all these should be declared at the top
+//=============================================================
+
+/**
+ * Function to initiate the sql process for code validation
+ *
+ * @param: void
+ *
+ * @return: db, SQLITE database object on success
+ * #todo: --debug mode: remove error reporting via header, @remove_them later
+ */
+static sqlite3 *csrfp_sql_init(request_rec *r)
+{
+    csrfp_config *conf = ap_get_module_config(r->server->module_config,
+                                                &csrf_protector_module);
+
+    sqlite3 *db;
+    int rc = sqlite3_open(NULL, &db);   //#todo move from in memory to file based 
+    if (rc != SQLITE_OK) {
+        apr_table_addn(r->headers_out, "sql-error", sqlite3_errmsg(db));
+        return NULL;
+    }
+
+    //#tdod: make sessid, token length configurable. also timestamp length
+    // & compile this sql string based on those values here
+    const char* sql = apr_psprintf(r->pool, "CREATE TABLE IF NOT EXISTS CSRFP("  \
+         "sessid char(%d) PRIMARY KEY NOT NULL," \
+         "token char(%d) NOT NULL,"\
+         "timestamp int NOT NULL );", 20, conf->tokenLength);
+
+    // Error reporting 
+    char *zErrMsg = 0;
+
+    /* Execute SQL statement */
+    rc = sqlite3_exec(db, sql, 0, 0, &zErrMsg);
+    if( rc != SQLITE_OK ){
+        apr_table_addn(r->headers_out, "sql-error-1", zErrMsg); 
+        return NULL;
+    }
+
+    // Clean old expired values
+    csrfp_sql_table_clean(r, db);
+    return db;
+}
+
+/**
+ * Function to add / Update token value in the db
+ *
+ * @param: r, request_rec object
+ * @param: db, sqlite database object
+ * @param: sessid, session id for this user
+ * @param: value, value of the token
+ *
+ * @return: integer, SQLITE_OK on success
+ * #todo: --debug mode: remove error reporting via header, @remove_them later
+ */
+static int csrfp_sql_addn(request_rec *r, sqlite3 *db, const char *sessid, const char *value)
+{
+    // sessid of value cannot be null
+    if (sessid == NULL || value == NULL)
+        return -1;
+
+    int timestamp = (unsigned)time(NULL);
+    
+    // Check if session id exists in db
+    int elts = 0;
+    sqlite3_stmt *res;
+    const char *tail;
+
+    // #todo: you might want to create a seperate pool for this & destroy it later
+    const char *sql = apr_psprintf(r->pool, "SELECT sessid FROM CSRFP WHERE sessid = '%s'", sessid);
+    int rc = sqlite3_prepare_v2(db, sql, 1000, &res, &tail);
+    if (rc != SQLITE_OK) {
+        apr_table_addn(r->headers_out, "sql-select-error", tail);
+        return rc;
+    } else {
+        while (sqlite3_step(res) == SQLITE_ROW) {
+            ++elts;
+        }
+        char *zErrMsg = NULL;
+        if (elts == 0) {
+            // Insert a new entry
+            const char *sql_ = apr_psprintf(r->pool, "INSERT INTO CSRFP (sessid, token, timestamp) VALUES ('%s', '%s', %d)", sessid, value, timestamp);
+            rc = sqlite3_exec(db, sql_, 0, 0, &zErrMsg);
+            if (rc != SQLITE_OK) {
+                apr_table_addn(r->headers_out, "sql-insert-error", tail);
+                return rc;
+            }
+        } else {
+            // Update
+            const char *sql_ = apr_psprintf(r->pool, "UPDATE CSRFP SET token = '%s', timestamp = %d WHERE sessid = '%s'", value, timestamp, sessid);
+            rc = sqlite3_exec(db, sql_, 0, 0, &zErrMsg);
+            if (rc != SQLITE_OK) {
+                apr_table_addn(r->headers_out, "sql-update-error", tail);
+                return rc;
+            }
+        }
+    }
+
+    return SQLITE_OK;
+}
+
+/**
+ * Function to match value in db to value sent as param
+ *
+ * @param: r, request_rec object
+ * @param: db, sqlite database object
+ * @param: sessid, session id for this user
+ * @param: value, value to match
+ *
+ * @return: 0 for correct match
+ * #todo: --debug mode: remove error reporting via header, @remove_them later
+ */
+static int csrfp_sql_match(request_rec *r, sqlite3 *db, const char *sessid, const char *value)
+{
+    // sessid of value cannot be null
+    if (sessid == NULL || value == NULL)
+        return -1;
+
+    int timestamp = (unsigned)time(NULL);
+    
+    // Check if session id exists in db
+    sqlite3_stmt *res;
+    const char *tail;
+
+    // #todo: you might want to create a seperate pool for this & destroy it later
+    char *sql = apr_psprintf(r->pool, "SELECT timestamp FROM CSRFP WHERE sessid = '%s' AND token = '%s'", sessid, value);
+    int rc = sqlite3_prepare_v2(db, sql,1000, &res, &tail);
+     if (rc != SQLITE_OK) {
+        apr_table_addn(r->headers_out, "sql-select-error", tail);
+        return rc;
+    } else {
+        while (sqlite3_step(res) == SQLITE_ROW) {
+            if (timestamp > (atoi(sqlite3_column_text(res, 0)) + TOKEN_EXPIRY_MAXTIME)) {
+                return -1;
+            }
+            return 0;
+        }
+    }    
+}
+
+/**
+ * Function to clear expired tokens from db
+ *
+ * @param: r, request_rec object
+ * @param: db, sqlite database object
+ *
+ * @return: void
+ * #todo: --debug mode: remove error reporting via header, @remove_them later
+ */
+
+static void csrfp_sql_table_clean(request_rec *r, sqlite3 *db)
+{
+    int timestamp = (unsigned)time(NULL) - TOKEN_EXPIRY_MAXTIME;
+    char *sql = apr_psprintf(r->pool, "DELETE FROM CSRFP WHERE timestamp < '%d'", timestamp);
+    char *zErrMsg;
+    int rc = sqlite3_exec(db, sql, 0, 0, &zErrMsg);
+    if (rc != SQLITE_OK) {
+        apr_table_addn(r->headers_out, "sql-clean-error", zErrMsg);
+    }
+}
 //=====================================================================
 // Handlers -- call back functions for different hooks
 //=====================================================================
@@ -731,10 +898,13 @@ static int csrfp_header_parser(request_rec *r)
         return OK;
     }
 
+    // Start the sql connection
+    sqlite3 *db = csrfp_sql_init(r);
+
     // If request type is POST
     // Need to check configs weather or not a validation is needed POST
     if ( !strcmp(r->method, "POST")
-        && !validatePOSTtoken(r)) {
+        && !validatePOSTtoken(r, db)) {
             
         // Log this --
         // Take actions as per configuration
@@ -757,6 +927,9 @@ static int csrfp_header_parser(request_rec *r)
             p = p->next;
         }
     }
+
+    // Close the sql connection
+    sqlite3_close(db);
 
     // Information for output_filter to regenrate token and
     // append it to output header -- Regenrate token
@@ -968,7 +1141,13 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
          * - Regenrate token
          * - Send it as output header
          */
-        setTokenCookie(r);
+        
+        // Start the sql connection
+        sqlite3 *db = csrfp_sql_init(r);
+        setTokenCookie(r, db);
+
+        // Close the sql connection
+        sqlite3_close(db);
     }
     return ap_pass_brigade(f->next, bb);
 }
