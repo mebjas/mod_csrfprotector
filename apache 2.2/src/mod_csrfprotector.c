@@ -31,8 +31,8 @@
 #include "apr_lib.h"
 #include "apr_strings.h"
 
+/** SQLite library **/
 #include "sqlite/sqlite3.h"
-#include "prng/prng.h"
 
 /** definations **/
 #define CSRFP_TOKEN "csrfp_token"
@@ -249,8 +249,7 @@ static int util_read(request_rec *r, const char **rbuf)
  */
 static apr_table_t *read_post(request_rec *r)
 {
-    const char *data;
-    const char *key, *val, *type;
+    const char *data, *key, *val, *type;
     int rc = OK;
 
     // If not POST, return
@@ -418,12 +417,13 @@ static char* getCookieToken(request_rec *r, char *key)
  */
 static int validatePOSTtoken(request_rec *r, sqlite3 *db)
 {
+
     const char* tokenValue = NULL;
 
     // parse the value from POST query
     apr_table_t *POST;
     POST = read_post(r);
-
+return 1;
     tokenValue = apr_table_get(POST, CSRFP_TOKEN);
 
     if (!tokenValue) return 0;
