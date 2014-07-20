@@ -8,6 +8,10 @@
 #include "stdlib.h"
 #include "time.h"
 
+/** openSSL **/
+#include "openssl/rand.h"
+#include "openssl/sha.h"
+
 /** apache **/
 #include "ap_config.h"
 #include "ap_provider.h"
@@ -303,21 +307,17 @@ static char* getCurrentUrl(request_rec *r)
  */
 static char* generateToken(request_rec *r, int length)
 {
-    // #todo - can add symbols like -_.,!+^@ to charset
-    const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJK1234567890";
+    const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJK1234567890-_@";
     char *token = NULL;
     token = apr_pcalloc(r->pool, sizeof(char) * length);
-
-    if (length) {
-        --length;
-        int n = 0;
-        for ( ; n < length; n++) {
-            unsigned char key = prng_get_octet();
-            key = key % (sizeof (charset) - 1);
-            token[n] = charset[key];
-        }
-        token[length] = '\0';
+    unsigned char buf[length];
+    RAND_pseudo_bytes(buf, sizeof(buf));
+    int i;
+    for (i = 0; i < length; i++) {
+        token[i] = charset[((int)buf[i]) % (sizeof(charset) - 1)];
     }
+    token[length] = '\0';
+    apr_table_addn(r->headers_out, "open-ssl-rand", token);
     return token;
 }
 
@@ -652,6 +652,7 @@ static int failedValidationAction(request_rec *r)
                 apr_cpystrn(r->args, "\0", 1);
             } else if (!strcmp(r->method, "POST")) {
                 // #todo: code to perform this
+                //ap_discard_request_body(r);
                 apr_table_addn(r->headers_out, "POST_DATA_CLEARING", "reached");
             }
             return OK;
