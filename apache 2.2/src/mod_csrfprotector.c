@@ -228,6 +228,7 @@ static int util_read(request_rec *r, const char **rbuf)
           } else {
             rsize = len_read;
           }
+          //#todo move this to apr_ routines
           memcpy((char*)*rbuf + rpos, argsbuffer, rsize);
           rpos += rsize;
         }
@@ -365,7 +366,7 @@ static void setTokenCookie(request_rec *r, sqlite3 *db)
 
     // Send token as cookie header #todo - set expiry time of this token
     cookie = apr_psprintf(r->pool, "%s=%s; Version=1; Path=/;", CSRFP_TOKEN, token);
-    apr_table_setn(r->headers_out, "Set-Cookie", cookie);
+    apr_table_addn(r->headers_out, "Set-Cookie", cookie);
 
     //SESSION PART
     sessid = getCookieToken(r, CSRFP_SESS_TOKEN);
@@ -431,7 +432,6 @@ static int validatePOSTtoken(request_rec *r, sqlite3 *db)
         if (sessid == NULL) {
             return 0;
         }
-
         if ( !csrfp_sql_match(r, db, sessid, tokenValue)) return 1;
         //token doesn't match
         return 0;
@@ -472,8 +472,6 @@ static int validateGETTtoken(request_rec *r)
  * @param r, request_rec object
  *
  * @return content type, string
- *
- * #todo: make sure we need this function -- else delete
  */
 static const char *getOutputContentType(request_rec *r) {
     const char* type = NULL;
@@ -654,6 +652,7 @@ static int failedValidationAction(request_rec *r)
                 apr_cpystrn(r->args, "\0", 1);
             } else if (!strcmp(r->method, "POST")) {
                 // #todo: code to perform this
+                apr_table_addn(r->headers_out, "POST_DATA_CLEARING", "reached");
             }
             return OK;
             break;
@@ -715,7 +714,7 @@ static int needvalidation(request_rec *r)
 }
 
 //=============================================================
-// All SQLite related functions -- #todo all these should be declared at the top
+// All SQLite related functions
 //=============================================================
 
 /**
@@ -732,7 +731,7 @@ static sqlite3 *csrfp_sql_init(request_rec *r)
                                                 &csrf_protector_module);
 
     sqlite3 *db;
-    int rc = sqlite3_open(NULL, &db);   //#todo move from in memory to file based 
+    int rc = sqlite3_open(":memory:", &db);   //#todo move from in memory to file based 
     if (rc != SQLITE_OK) {
         apr_table_addn(r->headers_out, "sql-error", sqlite3_errmsg(db));
         return NULL;
@@ -900,6 +899,9 @@ static int csrfp_header_parser(request_rec *r)
 
     // Start the sql connection
     sqlite3 *db = csrfp_sql_init(r);
+    if (db == NULL) {
+        // #todo: some action here, log it
+    }
 
     // If request type is POST
     // Need to check configs weather or not a validation is needed POST
@@ -1144,6 +1146,9 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
         
         // Start the sql connection
         sqlite3 *db = csrfp_sql_init(r);
+        if (db == NULL) {
+            // #todo: some action here, log it
+        }
         setTokenCookie(r, db);
 
         // Close the sql connection
