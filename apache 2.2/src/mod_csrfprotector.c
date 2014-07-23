@@ -35,7 +35,10 @@
 #include "sqlite/sqlite3.h"
 
 /** definations **/
+#define CSRFP_NAME_VERSION "CSRFP 0.0.1"
+
 #define CSRFP_TOKEN "csrfp_token"
+#define CSRFP_TOKEN_NAME_MAXLENGTH 40
 #define CSRFP_SESS_TOKEN "CSRFPSESSID"
 #define DEFAULT_POST_ENCTYPE "application/x-www-form-urlencoded"
 #define CSRFP_REGEN_TOKEN "true"
@@ -75,8 +78,8 @@ typedef enum
 {
     true,
     false
-} Flag;                         // Flag enum for stating weather to use...
-                                // ... mod or not
+} Flag;                                 // Flag enum for stating weather to use...
+                                        // ... mod or not
 
 typedef enum
 {
@@ -85,35 +88,36 @@ typedef enum
     redirect,
     message,
     internal_server_error
-} csrfp_actions;                    // Action enum listing all actions
+} csrfp_actions;                        // Action enum listing all actions
 
 typedef enum
 {
-    op_init,                        // States output filter has initiated
-    op_body_init,                   // States <body was found, <noscript inserted
-    op_body_end,                    // States </body> found, <script inserted
-    op_end                          // States output fiter task has finished
-} Filter_State;                     // enum of output filter states
+    op_init,                            // States output filter has initiated
+    op_body_init,                       // States <body was found, <noscript inserted
+    op_body_end,                        // States </body> found, <script inserted
+    op_end                              // States output fiter task has finished
+} Filter_State;                         // enum of output filter states
 
 typedef enum
 {
-    nmodified,                      // States Cookie Length not modified
-    modified                        // States Cookie Length modified
-} Filter_Cookie_Length_State;       // list of cookie length states
+    nmodified,                          // States Cookie Length not modified
+    modified                            // States Cookie Length modified
+} Filter_Cookie_Length_State;           // list of cookie length states
 
 typedef struct 
 {
-    Flag flag;                      // Flag to check if CSRFP is disabled...
-                                    // ... true by default
-    csrfp_actions action;            // Action Codes, Default - forbidden
-    char *errorRedirectionUri;      // Uri to redirect in case action == redirect
-    char *errorCustomMessage;       // Message to show in case action == message
-    char *jsFilePath;               // Absolute path for JS file
-    int tokenLength;                // Length of CSRFP_TOKEN, Default 20
-    char *disablesJsMessage;        // Message to be shown in <noscript>
-    ap_regex_t *ignore_pattern;     // Path pattern for which validation...
-                                    // ...is Not needed
-} csrfp_config;                      // CSRFP configuraion
+    Flag flag;                          // Flag to check if CSRFP is disabled...
+                                        // ... true by default
+    csrfp_actions action;               // Action Codes, Default - forbidden
+    char *errorRedirectionUri;          // Uri to redirect in case action == redirect
+    char *errorCustomMessage;           // Message to show in case action == message
+    char *jsFilePath;                   // Absolute path for JS file
+    int tokenLength;                    // Length of CSRFP_TOKEN, Default 20
+    char *tokenName;                    // Name of the CSRFP token
+    char *disablesJsMessage;            // Message to be shown in <noscript>
+    ap_regex_t *ignore_pattern;         // Path pattern for which validation...
+                                        // ...is Not needed
+} csrfp_config;                         // CSRFP configuraion
 
 typedef struct
 {
@@ -370,7 +374,7 @@ static void setTokenCookie(request_rec *r, sqlite3 *db)
     token = generateToken(r, conf->tokenLength);
 
     // Send token as cookie header #todo - set expiry time of this token
-    cookie = apr_psprintf(r->pool, "%s=%s; Version=1; Path=/;", CSRFP_TOKEN, token);
+    cookie = apr_psprintf(r->pool, "%s=%s; Version=1; Path=/;", conf->tokenName, token);
     apr_table_addn(r->headers_out, "Set-Cookie", cookie);
 
     //SESSION PART
@@ -423,12 +427,14 @@ static char* getCookieToken(request_rec *r, char *key)
 static int validatePOSTtoken(request_rec *r, sqlite3 *db)
 {
 
+    csrfp_config *conf = ap_get_module_config(r->server->module_config,
+                                                &csrf_protector_module);
     const char* tokenValue = NULL;
 
     // parse the value from POST query
     apr_table_t *POST;
     POST = read_post(r);
-    tokenValue = apr_table_get(POST, CSRFP_TOKEN);
+    tokenValue = apr_table_get(POST, conf->tokenName);
 
     if (!tokenValue) return 0;
     else {
@@ -452,6 +458,9 @@ static int validatePOSTtoken(request_rec *r, sqlite3 *db)
  */
 static int validateGETTtoken(request_rec *r, sqlite3 *db)
 {
+    csrfp_config *conf = ap_get_module_config(r->server->module_config,
+                                                &csrf_protector_module);
+
     //get table of all GET key-value pairs
     apr_table_t *GET = NULL;
     GET = csrfp_get_query(r);
@@ -460,7 +469,7 @@ static int validateGETTtoken(request_rec *r, sqlite3 *db)
 
     //retrieve our CSRF_token from the table
     const char *tokenValue = NULL;
-    tokenValue = apr_table_get(GET, CSRFP_TOKEN);
+    tokenValue = apr_table_get(GET, conf->tokenName);
 
     if (!tokenValue) return 0;
     else {
@@ -538,7 +547,7 @@ static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r) {
                                "}\n</script>\n",
                                 conf->jsFilePath,
                                 (getRuleString == NULL)?"": getRuleString,
-                                CSRFP_TOKEN);
+                                conf->tokenName);
 
     rctx->clstate = nmodified;
     rctx->overlap_buf = apr_pcalloc(r->pool, CSRFP_OVERLAP_BUCKET_SIZE);
@@ -919,7 +928,11 @@ static int csrfp_header_parser(request_rec *r)
     // Start the sql connection
     sqlite3 *db = csrfp_sql_init(r);
     if (db == NULL) {
-        // #todo: some action here, log it
+        ap_log_rerror(APLOG_MARK, APLOG_NOERRNO|APLOG_ERR, 0, r,
+                      "CSRFP UNABLE TO ACCESS DB OBJECT");
+        // #todo: ask Kevin/Abbas about this once
+        ap_rprintf(r, "OWASP CSRF Protector - SQLITE3 Database Open Error");
+        return DONE;
     }
 
     // If request type is POST
@@ -927,7 +940,7 @@ static int csrfp_header_parser(request_rec *r)
     if ( !strcmp(r->method, "POST")
         && !validatePOSTtoken(r, db)) {
             
-        // Log this --
+        // Log this -- [x]
         // Take actions as per configuration
         return failedValidationAction(r);
 
@@ -940,7 +953,7 @@ static int csrfp_header_parser(request_rec *r)
                 if (!validateGETTtoken(r, db)) {
 
                     // Means pattern matched && validation failed
-                    // Log this --
+                    // Log this -- [x]
                     // Take actions as per configuration
                     return failedValidationAction(r);
                 }
@@ -962,7 +975,7 @@ static int csrfp_header_parser(request_rec *r)
     apr_table_add(r->subprocess_env, "mod_csrfp_enabled", "true");
 
     // Appends X-Protected-By header to output header
-    apr_table_addn(r->headers_out, "X-Protected-By", "CSRFP 0.0.1");
+    apr_table_addn(r->headers_out, "X-Protected-By", CSRFP_NAME_VERSION);
     return OK;
 }
 
@@ -1020,6 +1033,7 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                 /**
                  * #todo: probably Content-Length is not generated by the time this hook is called
                  *          So we might want this be done by later hook
+                 *          Calculate the content-length value?
                  */
                 int errh = 0;
                 const char* cl =  apr_table_get(r->headers_out, "Content-Length");
@@ -1166,12 +1180,14 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
         // Start the sql connection
         sqlite3 *db = csrfp_sql_init(r);
         if (db == NULL) {
-            // #todo: some action here, log it
+            ap_log_rerror(APLOG_MARK, APLOG_NOERRNO|APLOG_ERR, 0, r,
+                      "CSRFP UNABLE TO ACCESS DB OBJECT");
+        } else {
+            setTokenCookie(r, db);
         }
-        setTokenCookie(r, db);
 
         // Clean old expired values
-        //csrfp_sql_table_clean(r, db);
+        csrfp_sql_table_clean(r, db);
 
         // Close the sql connection
         sqlite3_close(db);
@@ -1204,6 +1220,11 @@ static void *csrfp_srv_config_create(apr_pool_t *p, server_rec *s)
     config->flag = true;
     config->action = forbidden;
     config->tokenLength = DEFAULT_TOKEN_LENGTH;
+
+    // Allocate memory & assign default value for tokenName
+    config->tokenName = apr_pcalloc(p, CSRFP_TOKEN_NAME_MAXLENGTH);
+    apr_cpystrn(config->tokenName, CSRFP_TOKEN,
+        CSRFP_TOKEN_NAME_MAXLENGTH);
 
     // Allocates memory, and assign defalut value For jsFilePath
     config->jsFilePath = apr_pcalloc(p, CSRFP_URI_MAXLENGTH);
@@ -1240,6 +1261,18 @@ const char *csrfp_enable_cmd(cmd_parms *cmd, void *cfg, const char *arg)
 {
     if(!strcasecmp(arg, "off")) config->flag = false;
     else config->flag = true;
+    return NULL;
+}
+
+/** tokenName **/
+const char *csrfp_tokenName_cmd(cmd_parms *cmd, void *cfg, const char *arg)
+{
+    if(strlen(arg) > 0) {
+        apr_cpystrn(config->tokenName, arg,
+        CSRFP_TOKEN_NAME_MAXLENGTH);
+    }
+    // Else default value will be set
+
     return NULL;
 }
 
@@ -1358,7 +1391,7 @@ static const command_rec csrfp_directives[] =
                 RSRC_CONF|ACCESS_CONF,
                 "csrfpEnable 'on'|'off', enables the module. Default is 'on'"),
     AP_INIT_TAKE1("csrfpAction", csrfp_action_cmd, NULL,
-                RSRC_CONF|ACCESS_CONF,
+                RSRC_CONF,
                 "Defines Action to be taken in case of failed validation"),
     AP_INIT_TAKE1("errorRedirectionUri", csrfp_errorRedirectionUri_cmd, NULL,
                 RSRC_CONF,
@@ -1372,6 +1405,9 @@ static const command_rec csrfp_directives[] =
     AP_INIT_TAKE1("tokenLength", csrfp_tokenLength_cmd, NULL,
                 RSRC_CONF,
                 "Defines length of csrfp_token in cookie"),
+    AP_INIT_TAKE1("tokenName", csrfp_tokenName_cmd, NULL,
+                RSRC_CONF,
+                "Name of the csrf token, 'default is csrfp_token'"),
     AP_INIT_TAKE1("disablesJsMessage", csrfp_disablesJsMessage_cmd, NULL,
                 RSRC_CONF,
                 "<noscript> message to be shown to user"),
