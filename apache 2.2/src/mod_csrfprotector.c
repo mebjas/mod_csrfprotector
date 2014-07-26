@@ -988,7 +988,6 @@ static int csrfp_in_filter(ap_filter_t *f, apr_bucket_brigade *bbout, ap_input_m
                     do {
                         bytes = readbytes;
                         rstat = apr_bucket_read(b, &buf, &bytes, APR_BLOCK_READ);
-                        //TODO REMOVE IT
                         if ( rstat == APR_SUCCESS ) {
                             int buflen = strlen(buf);
                             char *chpointer = NULL;
@@ -1029,7 +1028,7 @@ static int csrfp_in_filter(ap_filter_t *f, apr_bucket_brigade *bbout, ap_input_m
                                     // Match found as in case 1
                                     rctx->isPOSTVerified = 1;
                                     // Regenrate token -- no action 
-                                    #ifndef DEBUG
+                                    #ifdef DEBUG
                                         ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "POST REQUEST VALIDATED");
                                     #endif
 
@@ -1044,7 +1043,7 @@ static int csrfp_in_filter(ap_filter_t *f, apr_bucket_brigade *bbout, ap_input_m
                                     // ^ Action
                                     //failedValidationAction(r);
                                     ap_discard_request_body(r);
-                                    #ifndef DEBUG
+                                    #ifdef DEBUG
                                         ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "POST REQUEST VALIDATED");
                                         ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "TOKEN FROM POST = %s , TOKEN IN DB = %s", token_, token);
                                     #endif
@@ -1520,6 +1519,7 @@ static const command_rec csrfp_directives[] =
 static void csrfp_register_hooks(apr_pool_t *pool)
 {
     // Create hooks in the request handler, so we get called when a request arrives
+    ap_hook_insert_filter(csrfp_insert_filter, NULL, NULL, APR_HOOK_FIRST);
 
     // Handler to parse incoming request and validate incoming request
     ap_hook_fixups(csrfp_header_parser, NULL, NULL, APR_HOOK_FIRST);
@@ -1530,8 +1530,7 @@ static void csrfp_register_hooks(apr_pool_t *pool)
     // Handler for reading POST data in input filter
     ap_register_input_filter("csrfp_in_filter", csrfp_in_filter, NULL, AP_FTYPE_RESOURCE);
 
-    ap_hook_insert_filter(csrfp_insert_filter, NULL, NULL, APR_HOOK_FIRST);
-
+    
 }
 
 
