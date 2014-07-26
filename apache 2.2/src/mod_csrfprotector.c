@@ -71,6 +71,8 @@
 
 #define DATABASE_DEFAULT_LOCATION "/tmp/csrfp.db"
 
+#define BUFSZ 8192
+
 //=============================================================
 // Definations of all data structures to be used later
 //=============================================================
@@ -130,6 +132,7 @@ typedef struct
                                         // ...modified, true for modified or need not modify
     char *overlap_buf;                  // Buffer to store content of current bb->b buffer ...
                                         // ... for next iteration in op filter [el]
+    int isPOSTVerified;
 } csrfp_opf_ctx;                        // CSRFP output filter context
 
 static csrfp_config *config;
@@ -149,7 +152,6 @@ module AP_MODULE_DECLARE_DATA csrf_protector_module;
 
 // Declarations for functions
 static char *generateToken(request_rec *r, int length);
-static apr_table_t *read_post(request_rec *r);
 static const char *csrfp_strncasestr(const char *s1, const char *s2, int len);
 static apr_table_t *csrfp_get_query(request_rec *r);
 static char* getCookieToken(request_rec *r, char *key);
@@ -213,84 +215,6 @@ static const char *csrfp_strncasestr(const char *s1, const char *s2, int len) {
 }
 
 /**
- * function to load POST data from request buffer
- *
- * @param: r, request_rec object
- * @param: char buffer to which data is loaded
- *
- * @return: returns 0 on success
- */
-static int util_read(request_rec *r, const char **rbuf)
-{
-    int rc;
-    if ((rc = ap_setup_client_block(r, REQUEST_CHUNKED_ERROR)) != OK) {
-        return rc;
-    }
-    if (ap_should_client_block(r)) {
-        char argsbuffer[HUGE_STRING_LEN];
-        int rsize, len_read, rpos=0;
-        long length = r->remaining;
-        *rbuf = apr_pcalloc(r->pool, length + 1);
-
-        //request_rec *s = apr_pcalloc(r->pool, sizeof (request_rec));
-        //*s = *r;
-
-        while ((len_read = ap_get_client_block(r, argsbuffer, sizeof(argsbuffer))) > 0) { 
-          if ((rpos + len_read) > length) {
-            rsize = length - rpos;
-          } else {
-            rsize = len_read;
-          }
-          //#todo move this to apr_ routines
-          memcpy((char*)*rbuf + rpos, argsbuffer, rsize);
-          rpos += rsize;
-        }
-    }
-    return rc;
-}
-
-/**
- * Returns table of POST key-value pair
- *
- * @param: r, request_rec object
- *
- * @return: tbl, apr_table_t table object
- */
-static apr_table_t *read_post(request_rec *r)
-{
-    const char *data, *key, *val, *type;
-    int rc = OK;
-
-    // If not POST, return
-    if (r->method_number != M_POST) {
-        return NULL;
-    }
-
-    type = apr_table_get(r->headers_in, "Content-Type");
-    // If content type not appropriate, return
-    if (strcasecmp(type, DEFAULT_POST_ENCTYPE) != 0) {
-        return NULL;
-    }
-
-    // If no data found in POST, return
-    if ((rc = util_read(r, &data)) != OK) {
-        return NULL;
-    }
-
-    apr_table_t *tbl;
-    // Allocate memory to POST data table
-    tbl = apr_table_make(r->pool, 8);
-    while(*data && (val = ap_getword(r->pool, &data, '&'))) {
-        key = ap_getword(r->pool, &val, '=');
-        ap_unescape_url((char*)key);
-        ap_unescape_url((char*)val);
-        apr_table_setn(tbl, key, val);
-    }
-
-    return tbl;
-}
-
-/**
  * Function to retrun current url
  *
  * @param r, request_rec object
@@ -315,7 +239,7 @@ static char* getCurrentUrl(request_rec *r)
  */
 static char* generateToken(request_rec *r, int length)
 {
-    const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJK1234567890-_@";
+    const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJK1234567890";
     char *token = NULL;
     token = apr_pcalloc(r->pool, sizeof(char) * length);
     unsigned char buf[length];
@@ -416,38 +340,6 @@ static char* getCookieToken(request_rec *r, char *key)
     return NULL;
 }
 
-/**
- * Function to validate post token, csrfp_token in POST query parameter
- *
- * @param: r, request_rec pointer
- * @param: db, sqlite 3 database object
- *
- * @return: int, 0 - for failed validation, 1 - for passed
- */
-static int validatePOSTtoken(request_rec *r, sqlite3 *db)
-{
-
-    csrfp_config *conf = ap_get_module_config(r->server->module_config,
-                                                &csrf_protector_module);
-    const char* tokenValue = NULL;
-
-    // parse the value from POST query
-    apr_table_t *POST;
-    POST = read_post(r);
-    tokenValue = apr_table_get(POST, conf->tokenName);
-
-    if (!tokenValue) return 0;
-    else {
-        char *sessid = getCookieToken(r, CSRFP_SESS_TOKEN);
-        if (sessid == NULL) {
-            return 0;
-        }
-        if ( !csrfp_sql_match(r, db, sessid, tokenValue)) return 1;
-        //token doesn't match
-        return 0;
-    }
-    return 0;
-}
 
 /**
  * Function to validate GET token, csrfp_token in GET query parameter
@@ -554,6 +446,8 @@ static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r) {
     apr_cpystrn(rctx->overlap_buf,
         CSRFP_OVERLAP_BUCKET_DEFAULT, CSRFP_OVERLAP_BUCKET_SIZE);
 
+    rctx->isPOSTVerified = 0;   // Means not verified yet
+
     // globalise this configuration
     ap_set_module_config(r->request_config, &csrf_protector_module, rctx);
   }
@@ -612,33 +506,14 @@ static void logCSRFAttack(request_rec *r)
                                                 &csrf_protector_module);
 
     int isGet = (!strcmp(r->method, "GET"));
-    const char *POSTArgs;
-    if (isGet == 0) {
-        // Get POST arguments
-        // parse the value from POST query
-        apr_table_t *POST;
-        POST = read_post(r);
-
-        const apr_array_header_t *fields;
-        int i;
-        apr_table_entry_t *e = 0;
-
-        fields = apr_table_elts(POST);
-        e = (apr_table_entry_t *) fields->elts;
-        for(i = 0; i < fields->nelts; i++) {
-            if (POSTArgs == NULL)
-                POSTArgs = apr_pstrcat(r->pool, e[i].key, "->", e[i].val, ",", NULL);
-            else
-                POSTArgs = apr_pstrcat(r->pool, POSTArgs, e[i].key, "->", e[i].val, ",", NULL);
-        }
-    }
+    const char *POSTArgs;   //#todo a way to log POST arguments
     // Log the failure
     ap_log_rerror(APLOG_MARK, APLOG_NOERRNO|APLOG_ERR, 0, r,
                       "CSRF ATTACK, %s, action=%d, method=%s, arguments=%s, url=%s", 
                       conf->action == strip ? "strip & served" : "denied",
                       conf->action,
                       (isGet)? "GET" : "POST",
-                      (isGet)? r->args: POSTArgs,
+                      (isGet)? r->args: "POSTArgs", //remove ""
                       getCurrentUrl(r));
 }
 
@@ -668,8 +543,8 @@ static int failedValidationAction(request_rec *r)
                 && r->args) {
                 apr_cpystrn(r->args, "\0", 1);
             } else if (!strcmp(r->method, "POST")) {
-                //ap_discard_request_body(r);
-                apr_table_addn(r->headers_out, "POST_DATA_CLEARING", "reached");
+                ap_discard_request_body(r);
+                //apr_table_addn(r->headers_out, "POST_DATA_CLEARING", "reached");
             }
             return OK;
             break;
@@ -883,6 +758,44 @@ static int csrfp_sql_match(request_rec *r, sqlite3 *db, const char *sessid, cons
 }
 
 /**
+ * Function to return token value for session id
+ *
+ * @param: r, request_rec object
+ * @param: db, sqlite database object
+ * @param: sessid, session id against which db lookup is needed
+ *
+ * @return: token saved in db for sessid
+ */
+
+static char* csrfp_sql_get(request_rec *r, sqlite3 *db, char *sessid)
+{
+    // sessid of value cannot be null
+    if (sessid == NULL)
+        return NULL;
+    
+    // Check if session id exists in db
+    sqlite3_stmt *res;
+    const char *tail;
+
+    // #todo: you might want to create a seperate pool for this & destroy it later
+    char *sql = apr_psprintf(r->pool, "SELECT token FROM CSRFP WHERE sessid = '%s'", sessid);
+    int rc = sqlite3_prepare_v2(db, sql, 1000, &res, &tail);
+     if (rc != SQLITE_OK) {
+        #ifdef DEBUG
+            apr_table_addn(r->headers_out, "sql-get-select-error", tail);
+        #endif
+        return NULL;
+    } else {
+        while (sqlite3_step(res) == SQLITE_ROW) {
+            char *ret = apr_pstrdup(r->pool, sqlite3_column_text(res, 0));
+            sqlite3_reset(res);
+            return ret;
+        }
+        return NULL;
+    }   
+}
+
+/**
  * Function to clear expired tokens from db
  *
  * @param: r, request_rec object
@@ -925,26 +838,30 @@ static int csrfp_header_parser(request_rec *r)
         return OK;
     }
 
-    // Start the sql connection
-    sqlite3 *db = csrfp_sql_init(r);
-    if (db == NULL) {
-        ap_log_rerror(APLOG_MARK, APLOG_NOERRNO|APLOG_ERR, 0, r,
-                      "CSRFP UNABLE TO ACCESS DB OBJECT");
-        // #todo: ask Kevin/Abbas about this once
-        ap_rprintf(r, "OWASP CSRF Protector - SQLITE3 Database Open Error");
-        return DONE;
-    }
-
     // If request type is POST
     // Need to check configs weather or not a validation is needed POST
-    if ( !strcmp(r->method, "POST")
-        && !validatePOSTtoken(r, db)) {
+    if ( !strcmp(r->method, "POST")) {
             
         // Log this -- [x]
         // Take actions as per configuration
-        return failedValidationAction(r);
 
+        ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "--FIXUP HOOK ~ READ POST--");
+        // ^ #todo REMOVE IT
+
+        // Add input filter to validate the POST request
+        ap_add_input_filter("csrfp_in_filter", NULL, r, r->connection); 
+        return OK;
     } else if ( !strcmp(r->method, "GET") ) {
+
+        // Start the sql connection
+        sqlite3 *db = csrfp_sql_init(r);
+        if (db == NULL) {
+            ap_log_rerror(APLOG_MARK, APLOG_NOERRNO|APLOG_ERR, 0, r,
+                          "CSRFP UNABLE TO ACCESS DB OBJECT");
+            // #todo: ask Kevin/Abbas about this once
+            ap_rprintf(r, "OWASP CSRF Protector - SQLITE3 Database Open Error");
+            return DONE;
+        }
 
         struct getRuleNode *p = getTop;
         while (p != NULL) {
@@ -955,15 +872,17 @@ static int csrfp_header_parser(request_rec *r)
                     // Means pattern matched && validation failed
                     // Log this -- [x]
                     // Take actions as per configuration
+                    // Close the sql connection
+                    sqlite3_close(db);
                     return failedValidationAction(r);
                 }
             }
             p = p->next;
         }
-    }
 
-    // Close the sql connection
-    sqlite3_close(db);
+        // Close the sql connection
+        sqlite3_close(db);
+    }
 
     // Information for output_filter to regenrate token and
     // append it to output header -- Regenrate token
@@ -980,6 +899,179 @@ static int csrfp_header_parser(request_rec *r)
 }
 
 /**
+ * Filters input for validating POST request
+ *
+ * @params: standard parameters for input filter
+ *
+ * @return int status_code
+ */
+static int csrfp_in_filter(ap_filter_t *f, apr_bucket_brigade *bbout, ap_input_mode_t mode,
+                            apr_read_type_e block, apr_off_t nbytes)
+{
+    request_rec *r = f->r;
+    csrfp_config *conf = ap_get_module_config(r->server->module_config,
+                                                &csrf_protector_module);
+
+    csrfp_opf_ctx *rctx = csrfp_get_rctx(r);
+    if (rctx->isPOSTVerified != 0) {
+        // Means POST verification already done!, remove this filter
+        ap_remove_input_filter(f);
+        return APR_SUCCESS;
+    }
+
+
+    // Connect to db, & get the token
+    char* sessionID = getCookieToken(r, CSRFP_SESS_TOKEN);
+    // Start the sql connection
+    sqlite3 *db = csrfp_sql_init(r);
+    char* token = csrfp_sql_get(r, db, sessionID);
+    // Close the sql connection
+    sqlite3_close(db);
+
+    if (token == NULL) {
+        ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "mod_csrfprotector --> INPUT FILTER: "
+            "unable to retrieve token for session id");
+        ap_remove_input_filter(f);
+        rctx->isPOSTVerified = -1;
+        return -1;
+    }
+
+    ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "--INPUT FILTER: %s --", token); 
+    // ^ #todo REMOVE IT
+
+
+    int eos = 0;
+    apr_bucket* b ;
+    apr_bucket* nextb ;
+    apr_bucket_brigade* bb;
+    int rv ;
+    int rstat ;
+    const char* buf ;
+    size_t bytes ;
+    size_t readbytes = BUFSZ ;
+  
+    bb = apr_brigade_create(r->pool, r->connection->bucket_alloc);
+
+    do {
+        rv = ap_get_brigade(f->next, bb, AP_MODE_READBYTES,
+                            APR_BLOCK_READ, readbytes);
+
+        if ( (rv != APR_SUCCESS ) && ( rv != APR_EAGAIN) ) {
+            return rv ;
+        }
+        for (b = APR_BRIGADE_FIRST(bb); b != APR_BRIGADE_SENTINEL(bb); b = nextb) {
+            
+            nextb = APR_BUCKET_NEXT(b) ;
+            APR_BUCKET_REMOVE(b) ;
+            APR_BRIGADE_INSERT_TAIL(bbout, b) ;
+            if ( APR_BUCKET_IS_EOS(b) ) {
+                eos = 1 ;
+                /* we still have data in leftover - now it's a complete arg=val */
+                /*
+                if ( leftover ) { 
+                    pair = leftover ;
+                    for (eq = pair ; *eq ; ++eq)
+                        if ( *eq == '+' )
+                            *eq = ' ' ;
+                    ap_unescape_url(pair) ;
+                    eq = strchr(pair, '=' ) ;
+                    if ( eq ) {
+                        *eq++ = 0 ;
+                        apr_table_mergen(ctx->vars, pair, eq) ;
+                    } else {
+                        apr_table_mergen(ctx->vars, pair, "") ;
+                    }
+                }
+                */
+            } else {
+                if ( ! APR_BUCKET_IS_METADATA(b) ) {
+                    do {
+                        bytes = readbytes;
+                        rstat = apr_bucket_read(b, &buf, &bytes, APR_BLOCK_READ);
+                        //TODO REMOVE IT
+                        if ( rstat == APR_SUCCESS ) {
+                            int buflen = strlen(buf);
+                            char *chpointer = NULL;
+                            // Case 1: the bucket has data which starts with csrp_token=<token..
+                            if (!strcmp(conf->tokenName, apr_pstrndup(r->pool, buf, strlen(conf->tokenName)))) {
+                                chpointer = buf;
+                                chpointer += strlen(conf->tokenName) +1;    //take pointer to csrfp_token=
+                                                                            //............................^...
+                            } else {
+                                // Case 2: bucket buf doesn't start with csrfp_token, also csrfp_token can exist some
+                                // ......where in sent POST data, so search for &csrfp_token
+                                char *needle = apr_psprintf(r->pool, "&%s", conf->tokenName);
+                                chpointer = csrfp_strncasestr(buf, needle, buflen);
+                                if (chpointer != NULL)
+                                    chpointer += strlen(needle) + 1;    //take pointer to csrfp_token=
+                                                                        //............................^...
+                            }
+
+                            // Case 1: find the whole string in this bucket
+                            // Case 2: part of token in this bucket, rest in next
+                            // Case 3: csrfp_] .. [token, token name in different buckets
+                            // Case 4: token not at all in this bucket
+                            if (chpointer) {
+                                int i = 0;
+                                char *p = chpointer;
+                                for (i; i < conf->tokenLength; i++) {
+                                    if (*p == '\0')
+                                        break;
+                                    p++;
+                                }
+                                if (i != conf->tokenLength) {
+                                    // Case 2 -- #tod: check is this case is possible, if not remove this peice of code
+                                    // else: add char[strlen(tokenName) + 1 + tokenlength] from end to overflow buf
+                                    continue;
+                                }
+                                const char* token_ = apr_pstrndup(r->pool, chpointer, conf->tokenLength);
+                                if (!strcmp(token_, token)) {
+                                    // Match found as in case 1
+                                    rctx->isPOSTVerified = 1;
+                                    // Regenrate token -- no action 
+                                    #ifndef DEBUG
+                                        ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "POST REQUEST VALIDATED");
+                                    #endif
+
+                                    // Information for output_filter to regenrate token and
+                                    // append it to output header -- Regenrate token
+                                    // Section to regenrate and send new Cookie Header (csrfp_token) to client
+                                    apr_table_add(r->subprocess_env, "regen_csrfptoken", CSRFP_REGEN_TOKEN);
+                                } else {
+                                    rctx->isPOSTVerified = -1;
+                                    apr_table_add(r->subprocess_env, "csrfp_post_action", "true");
+
+                                    // ^ Action
+                                    //failedValidationAction(r);
+                                    ap_discard_request_body(r);
+                                    #ifndef DEBUG
+                                        ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "POST REQUEST VALIDATED");
+                                        ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "TOKEN FROM POST = %s , TOKEN IN DB = %s", token_, token);
+                                    #endif
+                                    ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "module_config: [POST], TOKEN NOT FOUND IN POST DATA");
+                                }
+                                apr_brigade_cleanup(bb);
+                                apr_brigade_destroy(bb);
+                                ap_remove_input_filter(f);
+                                return APR_SUCCESS;
+                            }
+                        }
+                    } while ( rstat == APR_EAGAIN ) ;
+                    if ( rstat != APR_SUCCESS ) {
+                        ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 1, r, "rstat = APR_SUCCESS");
+                        return rstat ;
+                    }
+                }
+            }
+        }
+        apr_brigade_cleanup(bb) ;
+    } while ( ! eos ) ;
+    apr_brigade_destroy(bb);
+
+    return APR_SUCCESS; 
+}
+
+/**
  * Filters output generated by content generator and modify content
  *
  * @param f, apache filter object
@@ -990,7 +1082,8 @@ static int csrfp_header_parser(request_rec *r)
 static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 {
     request_rec *r = f->r;
-
+ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "--OUTPUT FILTER:  --"); 
+// ^ TODO REMOVE IT
     /**
      * if request  file is image or js, ignore the filter on the top itself
      */
@@ -1176,7 +1269,9 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
          * - Regenrate token
          * - Send it as output header
          */
-        
+        ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "mod_csrfprotector: regen token env var set");
+        // ^ #todo REMOVE IT
+
         // Start the sql connection
         sqlite3 *db = csrfp_sql_init(r);
         if (db == NULL) {
@@ -1196,7 +1291,7 @@ static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 }
 
 /**
- * Registers op filter -- csrfp_out_filter
+ * Registers in filter -- csrfp_in_filter
  *
  * @param: r,request_rec object
  *
@@ -1206,6 +1301,7 @@ static void csrfp_insert_filter(request_rec *r)
 {
     ap_add_output_filter("csrfp_out_filter", NULL, r, r->connection);
 }
+
 
 /**
  * Handler to allocate memory to config object
@@ -1417,11 +1513,6 @@ static const command_rec csrfp_directives[] =
     { NULL }
 };
 
-static int csrfp_post_processing_hook(request_rec *r)
-{
-    ap_add_output_filter("csrfp_op_content_length_filter", NULL, r, r->connection);
-}
-
 /**
  * Hook registering function for mod_csrfp
  * @param: pool, apr_pool_t
@@ -1431,12 +1522,16 @@ static void csrfp_register_hooks(apr_pool_t *pool)
     // Create hooks in the request handler, so we get called when a request arrives
 
     // Handler to parse incoming request and validate incoming request
-    ap_hook_header_parser(csrfp_header_parser, NULL, NULL, APR_HOOK_FIRST);
+    ap_hook_fixups(csrfp_header_parser, NULL, NULL, APR_HOOK_FIRST);
 
     // Handler to modify output filter
     ap_register_output_filter("csrfp_out_filter", csrfp_out_filter, NULL, AP_FTYPE_RESOURCE);
 
-    ap_hook_insert_filter(csrfp_insert_filter, NULL, NULL, APR_HOOK_MIDDLE);
+    // Handler for reading POST data in input filter
+    ap_register_input_filter("csrfp_in_filter", csrfp_in_filter, NULL, AP_FTYPE_RESOURCE);
+
+    ap_hook_insert_filter(csrfp_insert_filter, NULL, NULL, APR_HOOK_FIRST);
+
 }
 
 
