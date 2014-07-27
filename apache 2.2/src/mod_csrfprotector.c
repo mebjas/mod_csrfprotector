@@ -72,6 +72,7 @@
 #define DATABASE_DEFAULT_LOCATION "/tmp/csrfp.db"
 
 #define BUFSZ 8192
+#define RESEED_RAND_AT 10000
 
 //=============================================================
 // Definations of all data structures to be used later
@@ -162,6 +163,8 @@ static void csrfp_sql_table_clean(request_rec *r, sqlite3 *db);
 static sqlite3 *csrfp_sql_init(request_rec *r);
 static int csrfp_sql_match(request_rec *r, sqlite3 *db, const char *sessid, const char *value);
 static int csrfp_sql_addn(request_rec *r, sqlite3 *db, const char *sessid, const char *value);
+static int csrfp_sql_update_counter(request_rec *r, sqlite3 *db);
+static char* csrfp_sql_get(request_rec *r, sqlite3 *db, char *sessid);
 
 //=============================================================
 // Functions
@@ -312,6 +315,33 @@ static void setTokenCookie(request_rec *r, sqlite3 *db)
 
     cookie = apr_psprintf(r->pool, "%s=%s; Version=1; Path=/; HttpOnly;", CSRFP_SESS_TOKEN, sessid);
     apr_table_addn(r->headers_out, "Set-Cookie", cookie);
+
+    // Update counter & reseed if needed
+    int counter = csrfp_sql_update_counter(r, db);
+    if (counter == RESEED_RAND_AT) {
+        //Reseed the RAND value, get rand values from /dev/urandom & reseed
+        char buf[conf->tokenLength];
+        FILE *fp;
+        if (!fp) {
+            apr_table_addn(r->headers_out, "rand-reseed-error", "Unable to open /dev/urandom");
+            // ^ #todo: change this with some error message to client
+        }   
+        fp = fopen("/dev/urandom", "r");
+        fread(&buf, 1, conf->tokenLength, fp);
+        fclose(fp);
+        RAND_seed(buf, sizeof(buf));
+
+        // Now reset the counter
+        const char *sql = apr_psprintf(r->pool, "UPDATE CSRFP_COUNTER SET counter = 0");
+        char *zErrMsg = NULL;
+        int rc = sqlite3_exec(db, sql, 0, 0, &zErrMsg);
+        if (rc != SQLITE_OK) {
+            #ifdef DEBUG
+                apr_table_addn(r->headers_out, "sql-counter-reset-error", zErrMsg);
+            #endif
+        }
+
+    }
 } 
 
 /**
@@ -646,7 +676,81 @@ static sqlite3 *csrfp_sql_init(request_rec *r)
         return NULL;
     }
 
+    // Create a table for storing, the requests count
+    sql = apr_psprintf(r->pool, "CREATE TABLE IF NOT EXISTS CSRFP_COUNTER (" \
+            "counter int NOT NULL );");
+
+    rc = sqlite3_exec(db, sql, 0, 0, &zErrMsg);
+    if( rc != SQLITE_OK ){
+        #ifdef DEBUG
+            apr_table_addn(r->headers_out, "sql-init-counter-error", zErrMsg);
+        #endif
+        return NULL;
+    }    
+
     return db;
+}
+
+/**
+ * Function to add / Update counter value for reseeding
+ *
+ * @param: r, request_rec object
+ * @param: db, sqlite database object
+ *
+ * @return: integer, current counter
+ */
+static int csrfp_sql_update_counter(request_rec *r, sqlite3 *db)
+{
+    // Check if exist -- true > update, false > insert 1
+    int counter = 1;
+    int shouldUpdate = 0;
+    sqlite3_stmt *res;
+    const char *tail;
+
+    // #todo: you might want to create a seperate pool for this & destroy it later
+    const char *sql = apr_psprintf(r->pool, "SELECT counter FROM CSRFP_COUNTER");
+    int rc = sqlite3_prepare_v2(db, sql, 1000, &res, &tail);
+    if (rc != SQLITE_OK) {
+        #ifdef DEBUG
+            apr_table_addn(r->headers_out, "sql-update-counter-select-error", tail);
+        #endif
+        return rc;
+    } else {
+        while (sqlite3_step(res) == SQLITE_ROW) {
+            counter = atoi(sqlite3_column_text(res, 0));
+            ++shouldUpdate;
+            break;
+        }
+    }
+    sqlite3_reset(res);
+
+    char *zErrMsg = NULL;
+    if (shouldUpdate != 0) {
+        //means entry exist -- update
+        sql = apr_psprintf(r->pool, "UPDATE CSRFP_COUNTER SET counter = counter + 1");
+        rc = sqlite3_exec(db, sql, 0, 0, &zErrMsg);
+        if (rc != SQLITE_OK) {
+            #ifdef DEBUG
+                apr_table_addn(r->headers_out, "sql-update-counter-update-error", zErrMsg);
+            #endif
+            return rc;
+        }
+        counter++;
+    } else {
+        // Insert
+        sql = apr_psprintf(r->pool, "INSERT INTO CSRFP_COUNTER (counter) VALUES (1)");
+        rc = sqlite3_exec(db, sql, 0, 0, &zErrMsg);
+        if (rc != SQLITE_OK) {
+            #ifdef DEBUG
+                apr_table_addn(r->headers_out, "sql-update-counter-insert-error", zErrMsg);
+            #endif
+            return rc;
+        }
+    }
+    #ifdef DEBUG
+        apr_table_addn(r->headers_out, "sql-update-counter-value", apr_itoa(r->pool, counter));
+    #endif
+    return counter;
 }
 
 /**
@@ -686,7 +790,6 @@ static int csrfp_sql_addn(request_rec *r, sqlite3 *db, const char *sessid, const
             break;
         }
     }
-    //sqlite3_finalize(res);
     sqlite3_reset(res);
 
     char *zErrMsg = NULL;
@@ -1036,12 +1139,13 @@ static int csrfp_in_filter(ap_filter_t *f, apr_bucket_brigade *bbout, ap_input_m
                                     // append it to output header -- Regenrate token
                                     // Section to regenrate and send new Cookie Header (csrfp_token) to client
                                     apr_table_add(r->subprocess_env, "regen_csrfptoken", CSRFP_REGEN_TOKEN);
+
+                                    
                                 } else {
                                     rctx->isPOSTVerified = -1;
                                     apr_table_add(r->subprocess_env, "csrfp_post_action", "true");
-
                                     // ^ Action
-                                    //failedValidationAction(r);
+
                                     ap_discard_request_body(r);
                                     #ifdef DEBUG
                                         ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "POST REQUEST VALIDATED");
@@ -1053,6 +1157,7 @@ static int csrfp_in_filter(ap_filter_t *f, apr_bucket_brigade *bbout, ap_input_m
                                 apr_brigade_destroy(bb);
                                 ap_remove_input_filter(f);
                                 return APR_SUCCESS;
+                                
                             }
                         }
                     } while ( rstat == APR_EAGAIN ) ;
@@ -1298,6 +1403,9 @@ ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "--OUTPUT FILTER:  --");
  */
 static void csrfp_insert_filter(request_rec *r)
 {
+    ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, " -- INSERT FILTER --");
+        // ^ #todo REMOVE IT
+    ap_add_input_filter("csrfp_in_filter", NULL, r, r->connection); 
     ap_add_output_filter("csrfp_out_filter", NULL, r, r->connection);
 }
 
@@ -1518,19 +1626,17 @@ static const command_rec csrfp_directives[] =
  */
 static void csrfp_register_hooks(apr_pool_t *pool)
 {
-    // Create hooks in the request handler, so we get called when a request arrives
-    ap_hook_insert_filter(csrfp_insert_filter, NULL, NULL, APR_HOOK_FIRST);
-
-    // Handler to parse incoming request and validate incoming request
-    ap_hook_fixups(csrfp_header_parser, NULL, NULL, APR_HOOK_FIRST);
-
     // Handler to modify output filter
     ap_register_output_filter("csrfp_out_filter", csrfp_out_filter, NULL, AP_FTYPE_RESOURCE);
 
     // Handler for reading POST data in input filter
     ap_register_input_filter("csrfp_in_filter", csrfp_in_filter, NULL, AP_FTYPE_RESOURCE);
 
-    
+    // Create hooks in the request handler, so we get called when a request arrives
+    ap_hook_insert_filter(csrfp_insert_filter, NULL, NULL, APR_HOOK_REALLY_FIRST);
+
+    // Handler to parse incoming request and validate incoming request
+    ap_hook_fixups(csrfp_header_parser, NULL, NULL, APR_HOOK_LAST);
 }
 
 
