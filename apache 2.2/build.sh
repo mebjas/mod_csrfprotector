@@ -6,7 +6,7 @@ APACHE_VER=2.2.2
 echo "Building for apache version $APACHE_VER"
 echo "BUILD INIT...."
 echo "Initiating MOD_CSRFPROTECTOR BUILD PROCESS"
-sudo apxs2 -cia -n csrf_protector ./src/mod_csrfprotector.c -DDEBUG ./src/sqlite/sqlite3.c -lssl -lcrypto
+sudo apxs2 -cia -n csrf_protector ./src/mod_csrfprotector.c ./src/sqlite/sqlite3.c -lssl -lcrypto
 echo "BUILD FINISHED ...!"
 echo "Restarting APACHE ...!"
 
@@ -16,7 +16,7 @@ echo "" >> /etc/apache2/mods-enabled/csrf_protector.load
 echo "#Configuration for CSRFProtector" >> /etc/apache2/mods-enabled/csrf_protector.load
 echo "<IfModule mod_csrfprotector.c>" >> /etc/apache2/mods-enabled/csrf_protector.load
 echo "    csrfpEnable on" >> /etc/apache2/mods-enabled/csrf_protector.load
-echo "    csrfpAction strip" >> /etc/apache2/mods-enabled/csrf_protector.load
+echo "    csrfpAction forbidden" >> /etc/apache2/mods-enabled/csrf_protector.load
 #echo "    errorRedirectionUri \"\"" >> /etc/apache2/mods-enabled/csrf_protector.load
 echo "    errorCustomMessage \"<h2>Access forbidden by OWASP CSRFProtector</h2>\"" >> /etc/apache2/mods-enabled/csrf_protector.load
 echo "    jsFilePath http://localhost/csrfp_js/csrfprotector.js" >> /etc/apache2/mods-enabled/csrf_protector.load

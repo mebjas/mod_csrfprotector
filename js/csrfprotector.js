@@ -117,17 +117,25 @@ var CSRFP = {
 	 */
 	_csrfpWrap: function(fun, obj) {
 		return function(event) {
-			// Remove CSRf token if exists
-			if (typeof obj[CSRFP.CSRFP_TOKEN] !== 'undefined') {
-				var target = obj[CSRFP.CSRFP_TOKEN];
-				target.parentNode.removeChild(target);
-			}
-			
+			// Let developer apply their logic
 			// Trigger the functions
 			var result = fun.apply(this, [event]);
 			
-			// Now append the csrfp_token back
-			obj.appendChild(CSRFP._getInputElt());
+			// Now check/update the csrfp_token
+			var action = obj.action;
+			if (action.indexOf('?') !== -1) {
+				// some args exist
+				if (action.indexOf(CSRFP.CSRFP_TOKEN) !== -1) {
+					//csrfp token exist
+					action = action.replace(new RegExp(CSRFP.CSRFP_TOKEN +"=.*?(&|$)", 'g'),
+						CSRFP.CSRFP_TOKEN +"=" +CSRFP._getAuthKey() + "$1");
+				} else {
+					action += '&' +CSRFP.CSRFP_TOKEN +'=' +CSRFP._getAuthKey();
+				}
+			} else {
+				action += '?' +CSRFP.CSRFP_TOKEN +'=' +CSRFP._getAuthKey();
+			}
+			obj.action = action;
 			
 			return result;
 		};
@@ -142,6 +150,8 @@ var CSRFP = {
 	_init: function() {
 		//convert these rules received from php lib to regex objects
 		for (var i = 0; i < CSRFP.checkForUrls.length; i++) {
+			CSRFP.checkForUrls[i] = CSRFP.checkForUrls[i].replace(/\*/g, '(.*)')
+								.replace(/\//g, "\\/");
 			CSRFP.checkForUrls[i] = new RegExp(CSRFP.checkForUrls[i]);
 		}
 	
@@ -152,7 +162,7 @@ var CSRFP = {
 //==========================================================
 // Adding tokens, wrappers on window onload
 //==========================================================
-
+var eve;
 function csrfprotector_init() {
 	
 	// Call the init funcion
@@ -164,11 +174,30 @@ function csrfprotector_init() {
 	//==================================================================
 	for(var i = 0; i < document.forms.length; i++) {
 		document.forms[i].addEventListener("submit", function(event) {
-			if (typeof event.target[CSRFP.CSRFP_TOKEN] === 'undefined') {
-				event.target.appendChild(CSRFP._getInputElt());
+			eve = event;
+			if (event.target.getAttribute('isCSRFPTokenSet') == null) {
+				event.target.setAttribute('isCSRFPTokenSet', 'true');
+				if (event.target.action.indexOf('?') == -1) {
+					event.target.action += '?';
+				} else {
+					event.target.action += '&';
+				}
+				event.target.action += CSRFP.CSRFP_TOKEN +'=' +CSRFP._getAuthKey();
 			} else {
-				//modify token to latest value
-				event.target[CSRFP.CSRFP_TOKEN].value = CSRFP._getAuthKey();
+				var action = event.target.action;
+				if (action.indexOf('?') !== -1) {
+					// some args exist
+					if (action.indexOf(CSRFP.CSRFP_TOKEN) !== -1) {
+						//csrfp token exist
+						action = action.replace(new RegExp(CSRFP.CSRFP_TOKEN +"=.*?(&|$)", 'g'),
+							CSRFP.CSRFP_TOKEN +"=" +CSRFP._getAuthKey() + "$1");
+					} else {
+						action += '&' +CSRFP.CSRFP_TOKEN +'=' +CSRFP._getAuthKey();
+					}
+				} else {
+					action += '?' +CSRFP.CSRFP_TOKEN +'=' +CSRFP._getAuthKey();
+				}
+				event.target.action = action;
 			}
 		});
 	}
@@ -190,7 +219,7 @@ function csrfprotector_init() {
 	/**
 	 * Add wrapper for IE's attachEvent
 	 */
-	if (typeof HTMLFormElement.prototype.attachEvent !== undefined) {
+	if (typeof HTMLFormElement.prototype.attachEvent !== 'undefined') {
 		HTMLFormElement.prototype.attachEvent_ = HTMLFormElement.prototype.attachEvent;
 		HTMLFormElement.prototype.attachEvent = function(eventType, fun) {
 			if (eventType === 'submit') {
@@ -201,7 +230,8 @@ function csrfprotector_init() {
 			}
 		}
 	}
-	
+
+
 	//==================================================================
 	// Wrapper for XMLHttpRequest & ActiveXObject (for IE 6 & below)
 	// Set X-No-CSRF to true before sending if request method is 
@@ -221,8 +251,9 @@ function csrfprotector_init() {
 							+ location.pathname;
 			url = CSRFP._getAbsolutePath(base, url);
 		}
-		if (method.toLowerCase() === 'get' 
-			&& !CSRFP._isValidGetRequest(url)) {
+		if ((method.toLowerCase() === 'get' 
+			&& !CSRFP._isValidGetRequest(url))
+			|| method.toLowerCase() == 'post') {
 			//modify the url
 			if (url.indexOf('?') === -1) {
 				url += "?" +CSRFP.CSRFP_TOKEN +"=" +CSRFP._getAuthKey();
@@ -234,36 +265,12 @@ function csrfprotector_init() {
 		return this.old_open(method, url, async, username, password);
 	}
 
-	/** 
-	 * Wrapper to XHR send method
-	 * Add query paramter to XHR object
-	 *
-	 * @param: all parameters to XHR send method
-	 *
-	 * @return: object returned by default, XHR send method
-	 */
-	function new_send(data) {
-		if (this.method.toLowerCase() === 'post') {
-			
-			if (typeof data !== undefined) {
-				data += "&";
-			} else {
-				data = "";
-			}
-			
-			data += CSRFP.CSRFP_TOKEN +"=" +CSRFP._getAuthKey();
-		}
-		return this.old_send(data);
-	}
-
 	if (window.XMLHttpRequest) {
 		// Wrapping
-		XMLHttpRequest.prototype.old_send = XMLHttpRequest.prototype.send;
 		XMLHttpRequest.prototype.old_open = XMLHttpRequest.prototype.open;
 		XMLHttpRequest.prototype.open = new_open;
-		XMLHttpRequest.prototype.send = new_send;
 	}
-	if (typeof ActiveXObject !== undefined) {
+	if (typeof ActiveXObject !== 'undefined') {
 		ActiveXObject.prototype.old_send = ActiveXObject.prototype.send;
 		ActiveXObject.prototype.old_open = ActiveXObject.prototype.open;
 		ActiveXObject.prototype.open = new_open;
@@ -302,7 +309,7 @@ function csrfprotector_init() {
             }
             
             event.target.href = url;
-            if (typeof hash !== undefined) {
+            if (typeof hash !== 'undefined') {
                 event.target.href += '#' +hash;
             }
         });
