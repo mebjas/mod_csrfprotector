@@ -78,8 +78,8 @@
 //=============================================================
 typedef enum
 {
-    true,
-    false
+    CSRFP_TRUE,
+    CSRFP_FALSE                         // Added CSRFP_ prefix to preven enum redeclaration error in OS X
 } Flag;                                 // Flag enum for stating weather to use...
                                         // ... mod or not
 
@@ -891,7 +891,7 @@ static int csrfp_header_parser(request_rec *r)
 {
     csrfp_config *conf = ap_get_module_config(r->server->module_config,
                                                 &csrf_protector_module);
-    if (conf->flag == false) 
+    if (conf->flag == CSRFP_FALSE) 
         return OK;
 
     if (!needvalidation(r)) {
@@ -1197,7 +1197,7 @@ static void *csrfp_srv_config_create(apr_pool_t *p, server_rec *s)
 {
     // Registering default configurations
     config = apr_pcalloc(p, sizeof(csrfp_config));
-    config->flag = true;
+    config->flag = CSRFP_TRUE;
     config->action = forbidden;
     config->tokenLength = DEFAULT_TOKEN_LENGTH;
 
@@ -1239,8 +1239,8 @@ static void *csrfp_srv_config_create(apr_pool_t *p, server_rec *s)
 /** csrfEnable **/
 const char *csrfp_enable_cmd(cmd_parms *cmd, void *cfg, const char *arg)
 {
-    if(!strcasecmp(arg, "off")) config->flag = false;
-    else config->flag = true;
+    if(!strcasecmp(arg, "off")) config->flag = CSRFP_FALSE;
+    else config->flag = CSRFP_TRUE;
     return NULL;
 }
 
