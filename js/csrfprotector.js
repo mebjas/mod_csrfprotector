@@ -245,7 +245,7 @@ function csrfprotector_init() {
 	function new_send(data) {
 		if (this.method.toLowerCase() === 'post') {
 			
-			if (typeof data !== undefined) {
+			if (data !== '') {
 				data += "&";
 			} else {
 				data = "";
@@ -263,7 +263,7 @@ function csrfprotector_init() {
 		XMLHttpRequest.prototype.open = new_open;
 		XMLHttpRequest.prototype.send = new_send;
 	}
-	if (typeof ActiveXObject !== undefined) {
+	if (typeof ActiveXObject !== 'undefined') {
 		ActiveXObject.prototype.old_send = ActiveXObject.prototype.send;
 		ActiveXObject.prototype.old_open = ActiveXObject.prototype.open;
 		ActiveXObject.prototype.open = new_open;
@@ -302,7 +302,7 @@ function csrfprotector_init() {
             }
             
             event.target.href = url;
-            if (typeof hash !== undefined) {
+            if (typeof hash !== 'undefined') {
                 event.target.href += '#' +hash;
             }
         });
