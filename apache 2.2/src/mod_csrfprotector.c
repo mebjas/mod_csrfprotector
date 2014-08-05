@@ -225,7 +225,7 @@ static const char *csrfp_strncasestr(const char *s1, const char *s2, int len) {
 static char* getCurrentUrl(request_rec *r)
 {
     char *retval;
-    retval = apr_pstrcat(r->pool, "http://", r->hostname, r->uri, NULL);
+    retval = apr_pstrcat(r->pool, r->hostname, r->uri, NULL);
     return retval;
 }
 
@@ -535,11 +535,12 @@ static void logCSRFAttack(request_rec *r)
     const char *POSTArgs;   //#todo a way to log POST arguments
     // Log the failure
     ap_log_rerror(APLOG_MARK, APLOG_NOERRNO|APLOG_ERR, 0, r,
-                      "CSRF ATTACK, %s, action=%d, method=%s, arguments=%s, url=%s", 
+                      "CSRF ATTACK, %s, action=%d, method=%s, arguments=%s, url=%s%s", 
                       conf->action == strip ? "strip & served" : "denied",
                       conf->action,
                       (isGet)? "GET" : "POST",
                       (isGet)? r->args: "POSTArgs", //remove ""
+                      "https(s)://",
                       getCurrentUrl(r));
 }
 
@@ -924,8 +925,11 @@ static int csrfp_header_parser(request_rec *r)
 
         struct getRuleNode *p = getTop;
         while (p != NULL) {
-            const char *currentUrl = getCurrentUrl(r);
-            if (ap_regexec(p->pattern, currentUrl, 0, NULL, 0) == 0) {
+            const char *currentUrl = apr_pstrcat(r->pool, "http://", getCurrentUrl(r), NULL);
+            const char *currentUrlSecure = apr_pstrcat(r->pool, "https://", getCurrentUrl(r), NULL);
+
+            if (ap_regexec(p->pattern, currentUrl, 0, NULL, 0) == 0
+                || ap_regexec(p->pattern, currentUrlSecure, 0, NULL, 0) == 0) {
                 if (!validateToken(r, db)) {
 
                     // Means pattern matched && validation failed
