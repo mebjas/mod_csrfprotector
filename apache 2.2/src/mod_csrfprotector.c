@@ -228,7 +228,7 @@ static const char *csrfp_strncasestr(const char *s1, const char *s2, int len) {
 static char* getCurrentUrl(request_rec *r)
 {
     char *retval;
-    retval = apr_pstrcat(r->pool, "http://", r->hostname, r->uri, NULL);
+    retval = apr_pstrcat(r->pool, r->hostname, r->uri, NULL);
     return retval;
 }
 
@@ -539,11 +539,12 @@ static void logCSRFAttack(request_rec *r)
     const char *POSTArgs;   //#todo a way to log POST arguments
     // Log the failure
     ap_log_rerror(APLOG_MARK, APLOG_NOERRNO|APLOG_ERR, 0, r,
-                      "CSRF ATTACK, %s, action=%d, method=%s, arguments=%s, url=%s", 
+                      "CSRF ATTACK, %s, action=%d, method=%s, arguments=%s, url=%s%s", 
                       conf->action == strip ? "strip & served" : "denied",
                       conf->action,
                       (isGet)? "GET" : "POST",
-                      (isGet)? r->args: "POSTArgs", //remove ""
+                      (isGet)? r->args: "POSTArgs",
+                      "http(s)://"
                       getCurrentUrl(r));
 }
 
@@ -961,15 +962,18 @@ static int csrfp_header_parser(request_rec *r)
         if (db == NULL) {
             ap_log_rerror(APLOG_MARK, APLOG_NOERRNO|APLOG_ERR, 0, r,
                           "CSRFP UNABLE TO ACCESS DB OBJECT");
-            // #todo: ask Kevin/Abbas about this once
             ap_rprintf(r, "OWASP CSRF Protector - SQLITE3 Database Open Error");
             return DONE;
         }
 
         struct getRuleNode *p = getTop;
         while (p != NULL) {
-            const char *currentUrl = getCurrentUrl(r);
-            if (ap_regexec(p->pattern, currentUrl, 0, NULL, 0) == 0) {
+            //#todo: check if you can simply check the protocol
+            const char *currentUrl = apr_pstrcat(r->pool, "http://", getCurrentUrl(r), null);
+            const char *currentUrlSecure = apr_pstrcat(r->pool, "https://", getCurrentUrl(r), null);
+
+            if (ap_regexec(p->pattern, currentUrl, 0, NULL, 0) == 0
+                || ap_regexec(p->pattern, currentUrlSecure, 0, NULL, 0) == 0) {
                 if (!validateGETTtoken(r, db)) {
 
                     // Means pattern matched && validation failed
@@ -1143,15 +1147,18 @@ static int csrfp_in_filter(ap_filter_t *f, apr_bucket_brigade *bbout, ap_input_m
                                     
                                 } else {
                                     rctx->isPOSTVerified = -1;
+                                    apr_table_addn(r->headers_out, "csrfp_post_action", "true");
                                     apr_table_add(r->subprocess_env, "csrfp_post_action", "true");
                                     // ^ Action
 
-                                    ap_discard_request_body(r);
+                                    
                                     #ifdef DEBUG
                                         ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "POST REQUEST VALIDATED");
                                         ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "TOKEN FROM POST = %s , TOKEN IN DB = %s", token_, token);
                                     #endif
                                     ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "module_config: [POST], TOKEN NOT FOUND IN POST DATA");
+                                    //r->status = 403;
+                                    //return HTTP_INTERNAL_SERVER_ERROR;
                                 }
                                 apr_brigade_cleanup(bb);
                                 apr_brigade_destroy(bb);
@@ -1403,9 +1410,6 @@ ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "--OUTPUT FILTER:  --");
  */
 static void csrfp_insert_filter(request_rec *r)
 {
-    ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, " -- INSERT FILTER --");
-        // ^ #todo REMOVE IT
-    ap_add_input_filter("csrfp_in_filter", NULL, r, r->connection); 
     ap_add_output_filter("csrfp_out_filter", NULL, r, r->connection);
 }
 
