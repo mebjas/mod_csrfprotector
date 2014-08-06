@@ -220,7 +220,6 @@ static const char *csrfp_strncasestr(const char *s1, const char *s2, int len) {
  * @param r, request_rec object
  *
  * @return current url (char *)
- * @todo: set to http/https depending upon request r
  */
 static char* getCurrentUrl(request_rec *r)
 {
@@ -243,7 +242,6 @@ static char* generateToken(request_rec *r, int length)
     char *token = NULL;
     token = apr_pcalloc(r->pool, sizeof(char) * length);
     unsigned char buf[length];
-    // #todo: resead it
     RAND_pseudo_bytes(buf, sizeof(buf));
     int i;
     for (i = 0; i < length; i++) {
@@ -321,7 +319,7 @@ static void setTokenCookie(request_rec *r, sqlite3 *db)
         FILE *fp;
         if (!fp) {
             apr_table_addn(r->headers_out, "rand-reseed-error", "Unable to open /dev/urandom");
-            // ^ #todo: change this with some error message to client
+            // ^ #todo: change this with some error message to client -- ask Kevin
         }   
         fp = fopen("/dev/urandom", "r");
         fread(&buf, 1, conf->tokenLength, fp);
