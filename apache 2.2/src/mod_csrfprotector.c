@@ -238,14 +238,14 @@ static char* getCurrentUrl(request_rec *r)
  */
 static char* generateToken(request_rec *r, int length)
 {
-    const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJK1234567890";
+    const char *charset = apr_psprintf(r->pool, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890");
     char *token = NULL;
     token = apr_pcalloc(r->pool, sizeof(char) * length);
     unsigned char buf[length];
     RAND_pseudo_bytes(buf, sizeof(buf));
-    int i;
+    int i, len = strlen(charset);
     for (i = 0; i < length; i++) {
-        token[i] = charset[((int)buf[i]) % (sizeof(charset) - 1)];
+        token[i] = charset[((int)buf[i]) % (len - 1)];
     }
 
     token[length] = '\0';

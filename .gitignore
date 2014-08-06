@@ -1,0 +1,36 @@
+
+apache 2.2/build-id.txt
+
+apache 2.2/BUILD.metrics.xml
+
+apache 2.2/emit/Minhazs-MacBook-Pro.local/emit-db
+
+*.lock
+
+apache 2.2/emit/minhazs-mbp/emit-db
+
+apache 2.2/emit/version
+
+*.a
+
+*.lai
+
+*.o
+
+*.so
+
+apache 2.2/src/build-log.txt
+
+apache 2.2/src/emit/minhazs-mbp.connectify/emit-db
+
+apache 2.2/src/emit/version
+
+apache 2.2/src/.libs/mod_csrfprotector.so.dSYM/Contents/Info.plist
+
+apache 2.2/src/mod_csrfprotector.la
+
+apache 2.2/src/mod_csrfprotector.lo
+
+apache 2.2/src/sqlite/.libs/sqlite3.o
+
+apache 2.2/src/sqlite/sqlite3.lo
