@@ -20,14 +20,17 @@ For addition configurations you might want like to add config like
 
 ```
 #Configuration for CSRFProtector
-csrfpEnable on
-csrfpAction forbidden
-errorRedirectionUri ""
-errorCustomMessage "Access forbidden by OWASP CSRFProtector"
-jsFilePath "https://raw.githubusercontent.com/mebjas/mod_csrfprotector/master/js/csrfprotector.js"
-tokenLength 20
-disablesJsMessage ""
-verifyGetFor .*:\/\/.*\/.*
+<IfModule mod_csrfprotector.c>
+  csrfpEnable on
+  csrfpAction forbidden
+  errorRedirectionUri ""
+  errorCustomMessage "Access forbidden by OWASP CSRFProtector"
+  jsFilePath "https://raw.githubusercontent.com/mebjas/mod_csrfprotector/master/js/csrfprotector.js"
+  tokenLength 20
+  disablesJsMessage ""
+  verifyGetFor .*:\/\/localhost\/admin/.*
+  verifyGetFor .*:\/\/localhost\/user/delete.*
+</IfModule>
 ```
 
 ```
