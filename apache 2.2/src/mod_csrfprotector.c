@@ -111,6 +111,10 @@
 //=============================================================
 // Definations of all data structures to be used later
 //=============================================================
+/*
+ * Variable: Flag
+ * enumerator - for storing TRUE FALSE values for CSRFP
+ */
 typedef enum
 {
     CSRFP_TRUE,
@@ -118,6 +122,10 @@ typedef enum
 } Flag;                                 // Flag enum for stating weather to use...
                                         // ... mod or not
 
+/*
+ * Variable: csrfp_actions
+ * enumerator - lists the actions to be taken in case of failed validation
+ */
 typedef enum
 {
     forbidden,
@@ -127,6 +135,10 @@ typedef enum
     internal_server_error
 } csrfp_actions;                        // Action enum listing all actions
 
+/*
+ * Variable: Filter_Statae
+ * enumerator - lists the state through which the output filter goes
+ */
 typedef enum
 {
     op_init,                            // States output filter has initiated
@@ -135,13 +147,21 @@ typedef enum
     op_end                              // States output fiter task has finished
 } Filter_State;                         // enum of output filter states
 
+/*
+ * Variable: Filter_Cookie_Length_State
+ * enumerator - lists the state of token cookie
+ */
 typedef enum
 {
     nmodified,                          // States Cookie Length not modified
     modified                            // States Cookie Length modified
 } Filter_Cookie_Length_State;           // list of cookie length states
 
-typedef struct 
+/*
+ * Variable: csrfp_config
+ * structure - structure of the csrfp configuration
+ */
+typedef struct
 {
     Flag flag;                          // Flag to check if CSRFP is disabled...
                                         // ... true by default
@@ -156,6 +176,10 @@ typedef struct
                                         // ...is Not needed
 } csrfp_config;                         // CSRFP configuraion
 
+/*
+ * Variable: csrfp_opf_ctx
+ * structure - structure of the csrfp output filter configuration
+ */
 typedef struct
 {
     char *search;                       // Stores the item being serched (regex) 
@@ -171,6 +195,10 @@ typedef struct
 
 static csrfp_config *config;
 
+/*
+ * Variable: getRuleNode
+ * structure - linked list node for storing the GET rules
+ */
 typedef struct getRuleNode
 {
     ap_regex_t *pattern;
@@ -202,15 +230,18 @@ static int csrfp_sql_update_counter(request_rec *r, sqlite3 *db);
 // Functions
 //=============================================================
 
-/**
+/*
+ * Function: csrfp_strncasestr
  * Similar to standard strstr() but case insensitive and lenght limitation
  * (char which is not 0 terminated).
  *
- * @param s1 String to search in
- * @param s2 Pattern to ind
- * @param len Length of s1
+ * Parameters:
+ * s1 - String to search in
+ * s2 - Pattern to ind
+ * len - Length of s1
  *
- * @return pointer to the beginning of the substring s2 within s1, or NULL
+ * Rreturns:
+ * char* - pointer to the beginning of the substring s2 within s1, or NULL
  *         if the substring is not found
  */
 static const char *csrfp_strncasestr(const char *s1, const char *s2, int len) {
@@ -249,12 +280,15 @@ static const char *csrfp_strncasestr(const char *s1, const char *s2, int len) {
   return((char *)s1);
 }
 
-/**
+/*
+ * Function: getCurrentUrl
  * Function to retrun current url
  *
- * @param r, request_rec object
+ * Parameters:
+ * r - request_rec object
  *
- * @return current url (char *)
+ * Returns:
+ * current url (char *)
  */
 static char* getCurrentUrl(request_rec *r)
 {
@@ -263,13 +297,17 @@ static char* getCurrentUrl(request_rec *r)
     return retval;
 }
 
-/**
+/*
+ * Function: generateToken
  * Function to generate a pseudo random no to function as
  * CSRFP_TOKEN
  *
- * @param: length, int
+ * Parameters:
+ * r - request_rec object
+ * length - length of token to generate
  *
- * @return: token, csrftoken - string
+ * Returns: 
+ * token - csrftoken ,string
  */
 static char* generateToken(request_rec *r, int length)
 {
@@ -287,12 +325,15 @@ static char* generateToken(request_rec *r, int length)
     return token;
 }
 
-/**
+/*
+ * Funciton: csrfp_get_query
  * Returns a table containing the query name/value pairs.
  *
- * @param r, request_rec object
+ * Parameters:
+ * r - request_rec object
  *
- * @return tbl, Table of NULL if no parameter are available
+ * Returns:
+ * tbl - Table of NULL if no parameter are available
  */
 static apr_table_t *csrfp_get_query(request_rec *r)
 {
@@ -314,12 +355,15 @@ static apr_table_t *csrfp_get_query(request_rec *r)
     return tbl;
 }
 
-/** 
+/*
+ * Function: setTokenCookie
  * Function to append new CSRFP_TOKEN to output header
  *
- * @param r, request_rec object
+ * Parameters:
+ * r - request_rec object
  *
- * @return void
+ * Returns:
+ * void
  */
 static void setTokenCookie(request_rec *r, sqlite3 *db)
 {
@@ -374,12 +418,15 @@ static void setTokenCookie(request_rec *r, sqlite3 *db)
     }
 } 
 
-/**
+/*
+ * Function: getCookieToken
  * Function to return the token value from cookie
  *
- * @param: r, request_rec
+ * Parameters: 
+ * r - request_rec
  *
- * @return: CSRFP_TOKEN if exist in cookie, else null
+ * Returns: 
+ * CSRFP_TOKEN -  if exist in cookie, else null
  */
 static char* getCookieToken(request_rec *r, char *key)
 {
@@ -402,12 +449,15 @@ static char* getCookieToken(request_rec *r, char *key)
 }
 
 
-/**
+/*
+ * Function: validateToken
  * Function to validate GET token, csrfp_token in GET query parameter
  *
- * @param: r, request_rec pointer
+ * Parameters: 
+ * r - request_rec pointer
  *
- * @return: int, 0 - for failed validation, 1 - for passed
+ * Return: 
+ * int, 0 - for failed validation, 1 - for passed
  */
 static int validateToken(request_rec *r, sqlite3 *db)
 {
@@ -436,12 +486,15 @@ static int validateToken(request_rec *r, sqlite3 *db)
     }
 }
 
-/**
+/*
+ * Function: getOutputContentType
  * Returns content type of output generated by content generator
  *
- * @param r, request_rec object
+ * Parametes:
+ * r - request_rec object
  *
- * @return content type, string
+ * Returns: 
+ * content type - string
  */
 static const char *getOutputContentType(request_rec *r) {
     const char* type = NULL;
@@ -456,12 +509,16 @@ static const char *getOutputContentType(request_rec *r) {
     return type;
 }
 
-/**
+
+/*
+ * Function: csrfp_get_rctx
  * Get or create (and init) the pre request context used by the output filter
  *
- * @param r, request_rec object
- * 
- * @return context object for output filter ( csrfp_opf_ctx* )
+ * Parametes:
+ * r - request_rec object
+ *
+ * Returns: 
+ * context object for output filter ( csrfp_opf_ctx* )
  */
 static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r) {
   csrfp_opf_ctx *rctx = ap_get_module_config(r->request_config, &csrf_protector_module);
@@ -514,18 +571,22 @@ static csrfp_opf_ctx *csrfp_get_rctx(request_rec *r) {
   return rctx;
 }
 
-/**
+
+/*
+ * Function: csrfp_inject
  * Injects a new bucket containing a reference to the javascript.
  *
- * @param r, request_rec object
- * @param bb, bucket_brigade object
- * @param b Bucket to split and insert date new bucket at the postion of the marker
- * @param rctx Request context containing the state of the parser
- * @param buf String representation of the bucket
- * @param sz Position to split the bucket and insert the new content
- * @param flag, 0 - for <noscript> insertion, 1 for <script> insertion
+ * Parametes:
+ * r - request_rec object
+ * bb - bucket_brigade object
+ * b Bucket to split and insert date new bucket at the postion of the marker
+ * rctx - Request context containing the state of the parser
+ * buf - String representation of the bucket
+ * sz  - Position to split the bucket and insert the new content
+ * flag - 0 - for <noscript> insertion, 1 for <script> insertion
  *
- * @return Bucket to continue searching (at the marker)
+ * Returns: 
+ * Bucket to continue searching (at the marker)
  */
 static apr_bucket *csrfp_inject(request_rec *r, apr_bucket_brigade *bb, apr_bucket *b,
                                     csrfp_opf_ctx *rctx, const char *buf,
@@ -553,12 +614,15 @@ static apr_bucket *csrfp_inject(request_rec *r, apr_bucket_brigade *bb, apr_buck
     return b;
 }
 
-/**
+/*
+ * Function: logCSRFAttack
  * Function to log an attack
  *
- * @param r, request_rec object
+ * Parameters:
+ * r -  request_rec object
  *
- * @return void
+ * Returns:
+ * void
  */
 static void logCSRFAttack(request_rec *r)
 {
@@ -578,13 +642,16 @@ static void logCSRFAttack(request_rec *r)
                       getCurrentUrl(r));
 }
 
-/**
+/*
+ * Function: failedValidationAction
  * Returns appropriate status code, as per configuration
  * For failed validation action
  *
- * @param r, request_rec object
+ * Parameters:
+ * r - request_rec object
  *
- * @return int, status code for action
+ * Returns:  
+ * int - status code for action
  */
 static int failedValidationAction(request_rec *r)
 {
@@ -634,13 +701,16 @@ static int failedValidationAction(request_rec *r)
     }
 }
 
-/**
+/*
+ * Function: needvalidation
  * Function to decide weather to validate current request
  * Depending upon requested file, matched against ignore pattern
  *
- * @param: r, request_rec object
+ * Parameters: 
+ * r - request_rec object
  *
- * @return: int, - 1 if validation needed, 0 otherwise
+ * Returns: 
+ * int, - 1 if validation needed, 0 otherwise
  */
 static int needvalidation(request_rec *r)
 {
@@ -667,12 +737,15 @@ static int needvalidation(request_rec *r)
 // All SQLite related functions
 //=============================================================
 
-/**
+/*
+ * Function: csrfp_sql_init
  * Function to initiate the sql process for code validation
  *
- * @param: void
+ * Parameters: 
+ * r - request_rec object
  *
- * @return: db, SQLITE database object on success
+ * Returns: 
+ * db, SQLITE database object on success
  */
 static sqlite3 *csrfp_sql_init(request_rec *r)
 {
@@ -722,13 +795,16 @@ static sqlite3 *csrfp_sql_init(request_rec *r)
     return db;
 }
 
-/**
+/*
+ * Function: csrfp_sql_update_counter
  * Function to add / Update counter value for reseeding
  *
- * @param: r, request_rec object
- * @param: db, sqlite database object
+ * Parameters: 
+ * r - request_rec object
+ * db - sqlite database object
  *
- * @return: integer, current counter
+ * Returns: 
+ * integer, current counter
  */
 static int csrfp_sql_update_counter(request_rec *r, sqlite3 *db)
 {
@@ -784,15 +860,18 @@ static int csrfp_sql_update_counter(request_rec *r, sqlite3 *db)
     return counter;
 }
 
-/**
+/*
+ * Function: csrfp_sql_addn
  * Function to add / Update token value in the db
  *
- * @param: r, request_rec object
- * @param: db, sqlite database object
- * @param: sessid, session id for this user
- * @param: value, value of the token
+ * Parameters: 
+ * r - request_rec object
+ * db - sqlite database object
+ * sessid - session id for this user
+ * value-  value of the token
  *
- * @return: integer, SQLITE_OK on success
+ * Returns: 
+ * integer, SQLITE_OK on success
  */
 static int csrfp_sql_addn(request_rec *r, sqlite3 *db, const char *sessid, const char *value)
 {
@@ -849,15 +928,18 @@ static int csrfp_sql_addn(request_rec *r, sqlite3 *db, const char *sessid, const
     return SQLITE_OK;
 }
 
-/**
+/*
+ * Funciton: csrfp_sql_match
  * Function to match value in db to value sent as param
  *
- * @param: r, request_rec object
- * @param: db, sqlite database object
- * @param: sessid, session id for this user
- * @param: value, value to match
+ * Parameters: 
+ * r - request_rec object
+ * db - sqlite database object
+ * sessid - session id for this user
+ * value - value to match
  *
- * @return: 0 for correct match
+ * Returns: 
+ * 0 for correct match
  */
 static int csrfp_sql_match(request_rec *r, sqlite3 *db, const char *sessid, const char *value)
 {
@@ -893,13 +975,16 @@ static int csrfp_sql_match(request_rec *r, sqlite3 *db, const char *sessid, cons
     }   
 }
 
-/**
+/*
+ * Function: csrfp_sql_table_clean
  * Function to clear expired tokens from db
  *
- * @param: r, request_rec object
- * @param: db, sqlite database object
+ * Parameters: 
+ * r - request_rec object
+ * db - sqlite database object
  *
- * @return: void
+ * Returns: 
+ * void
  */
 
 static void csrfp_sql_table_clean(request_rec *r, sqlite3 *db)
@@ -917,12 +1002,15 @@ static void csrfp_sql_table_clean(request_rec *r, sqlite3 *db)
 //=====================================================================
 // Handlers -- call back functions for different hooks
 //=====================================================================
-/**
+/*
+ * Function: csrfp_header_parser
  * Callback function for header parser by Hook Registering function
  *
- * @param r, request_rec object
+ * Parameters:
+ * r - request_rec object
  *
- * @return status code, int
+ * Return:
+ * status code, int
  */
 static int csrfp_header_parser(request_rec *r)
 {
@@ -997,13 +1085,16 @@ static int csrfp_header_parser(request_rec *r)
     return OK;
 }
 
-/**
+/*
+ * Function: csrfp_out_filter
  * Filters output generated by content generator and modify content
  *
- * @param f, apache filter object
- * @param bb, apache brigade object
+ * Parameters:
+ * f - apache filter object
+ * bb - apache brigade object
  *
- * @return apr_status_t code
+ * Returns:
+ * apr_status_t code
  */
 static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 {
@@ -1214,12 +1305,15 @@ ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "--OUTPUT FILTER:  --");
     return ap_pass_brigade(f->next, bb);
 }
 
-/**
+/*
+ * Function: csrfp_insert_filter
  * Registers in filter -- csrfp_in_filter
  *
- * @param: r,request_rec object
+ * Parameters: 
+ * r - request_rec object
  *
- * @return void
+ * Returns:
+ * void
  */
 static void csrfp_insert_filter(request_rec *r)
 {
