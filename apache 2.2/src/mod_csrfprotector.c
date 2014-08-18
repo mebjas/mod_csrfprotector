@@ -1078,8 +1078,7 @@ static int csrfp_header_parser(request_rec *r)
 static apr_status_t csrfp_out_filter(ap_filter_t *f, apr_bucket_brigade *bb)
 {
     request_rec *r = f->r;
-ap_log_rerror(APLOG_MARK, APLOG_NOTICE, 0, r, "--OUTPUT FILTER:  --"); 
-// ^ TODO REMOVE IT
+
     /**
      * if request  file is image or js, ignore the filter on the top itself
      */

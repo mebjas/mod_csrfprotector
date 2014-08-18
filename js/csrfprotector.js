@@ -122,7 +122,7 @@ var CSRFP = {
 			var result = fun.apply(this, [event]);
 			
 			// Now check/update the csrfp_token
-			var action = obj.action;
+			var action = obj.getAttribute('action');
 			if (action.indexOf('?') !== -1) {
 				// some args exist
 				if (action.indexOf(CSRFP.CSRFP_TOKEN) !== -1) {
@@ -135,7 +135,7 @@ var CSRFP = {
 			} else {
 				action += '?' +CSRFP.CSRFP_TOKEN +'=' +CSRFP._getAuthKey();
 			}
-			obj.action = action;
+			obj.setAttribute('action', action);
 			
 			return result;
 		};
@@ -174,15 +174,19 @@ function csrfprotector_init() {
 	//==================================================================
 	for(var i = 0; i < document.forms.length; i++) {
 		document.forms[i].addEventListener("submit", function(event) {
-			eve = event;
+
 			if (event.target.getAttribute('isCSRFPTokenSet') == null) {
 				event.target.setAttribute('isCSRFPTokenSet', 'true');
-				if (event.target.action.indexOf('?') == -1) {
-					event.target.action += '?';
+				var action = event.target.getAttribute('action');
+				if (action.indexOf('?') == -1) {
+					action += '?';
+					event.target.setAttribute('action', action);
 				} else {
-					event.target.action += '&';
+					action += '&';
+					event.target.setAttribute('action', action);
 				}
-				event.target.action += CSRFP.CSRFP_TOKEN +'=' +CSRFP._getAuthKey();
+				action += CSRFP.CSRFP_TOKEN +'=' +CSRFP._getAuthKey();
+				event.target.setAttribute('action', action);
 			} else {
 				var action = event.target.action;
 				if (action.indexOf('?') !== -1) {
